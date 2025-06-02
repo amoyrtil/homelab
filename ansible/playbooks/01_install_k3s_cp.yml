@@ -1,0 +1,144 @@
+---
+# Playbook for installing k3s control plane nodes
+# This should be run after 00_prepare_nodes.yml
+
+- name: Install k3s on first control plane node
+  hosts: k3s_control_plane[0]
+  become: true
+  gather_facts: true
+  serial: 1
+
+  pre_tasks:
+    - name: Display first control plane node installation
+      debug:
+        msg: "Installing k3s on first control plane node: {{ inventory_hostname }}"
+      tags: always
+
+    - name: Verify prerequisites are met
+      assert:
+        that:
+          - k3s_token is defined and k3s_token != ""
+          - k3s_control_plane_endpoint is defined and k3s_control_plane_endpoint != ""
+        fail_msg: "k3s_token and k3s_control_plane_endpoint must be defined"
+      tags: always
+
+    - name: Set cluster init flag for first node
+      set_fact:
+        k3s_cluster_init: true
+      tags: always
+
+  roles:
+    - role: k3s_control_plane
+      tags: [k3s_control_plane, k3s_server]
+
+  post_tasks:
+    - name: Wait for k3s API server to be ready
+      wait_for:
+        port: 6443
+        host: "{{ ansible_default_ipv4.address }}"
+        delay: 30
+        timeout: 300
+      tags: always
+
+    - name: Verify k3s cluster is healthy
+      command: k3s kubectl get nodes
+      register: k3s_nodes_check
+      retries: 5
+      delay: 10
+      until: k3s_nodes_check.rc == 0
+      tags: verify
+
+    - name: Display first control plane node status
+      debug:
+        msg: "{{ k3s_nodes_check.stdout_lines }}"
+      tags: verify
+
+- name: Install k3s on additional control plane nodes
+  hosts: k3s_control_plane[1:]
+  become: true
+  gather_facts: true
+  serial: 1
+
+  pre_tasks:
+    - name: Display additional control plane node installation
+      debug:
+        msg: "Installing k3s on additional control plane node: {{ inventory_hostname }}"
+      tags: always
+
+    - name: Set cluster init flag for additional nodes
+      set_fact:
+        k3s_cluster_init: false
+      tags: always
+
+    - name: Wait for first control plane to be ready
+      wait_for:
+        port: 6443
+        host: "{{ k3s_control_plane_endpoint }}"
+        timeout: 300
+      delegate_to: localhost
+      tags: always
+
+  roles:
+    - role: k3s_control_plane
+      tags: [k3s_control_plane, k3s_server]
+
+  post_tasks:
+    - name: Wait for k3s API server to be ready
+      wait_for:
+        port: 6443
+        host: "{{ ansible_default_ipv4.address }}"
+        delay: 30
+        timeout: 300
+      tags: always
+
+    - name: Verify additional control plane node joined
+      command: k3s kubectl get nodes
+      register: k3s_nodes_check
+      retries: 5
+      delay: 10
+      until: k3s_nodes_check.rc == 0
+      tags: verify
+
+    - name: Display control plane nodes status
+      debug:
+        msg: "{{ k3s_nodes_check.stdout_lines }}"
+      tags: verify
+
+- name: Verify k3s control plane cluster health
+  hosts: k3s_control_plane[0]
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Check k3s cluster status
+      command: k3s kubectl get nodes -o wide
+      register: final_cluster_status
+      tags: verify
+
+    - name: Display final cluster status
+      debug:
+        msg: "{{ final_cluster_status.stdout_lines }}"
+      tags: verify
+
+    - name: Check etcd cluster health
+      command: k3s kubectl get endpoints kube-scheduler -n kube-system
+      register: etcd_health
+      failed_when: false
+      tags: verify
+
+    - name: Display etcd cluster health
+      debug:
+        msg: "{{ etcd_health.stdout_lines | default(['Etcd health check not available']) }}"
+      tags: verify
+
+    - name: Save kubeconfig for external access
+      fetch:
+        src: /etc/rancher/k3s/k3s.yaml
+        dest: ./kubeconfig
+        flat: true
+      tags: kubeconfig
+
+    - name: Display kubeconfig location
+      debug:
+        msg: "Kubeconfig saved to ./kubeconfig for external access"
+      tags: kubeconfig
