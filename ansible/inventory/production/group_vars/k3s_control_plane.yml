@@ -1,0 +1,34 @@
+---
+# Variables specific to k3s control plane nodes
+
+# k3s server configuration
+k3s_disable_components:
+  - traefik    # We'll install Traefik separately via manifests
+  - servicelb  # We'll use MetalLB or similar
+
+# k3s server startup options
+k3s_server_extra_args: []
+
+# Node labels for control plane
+k3s_node_labels:
+  node-role.kubernetes.io/control-plane: "true"
+
+# Node taints for control plane (prevent workloads by default)
+k3s_node_taints:
+  - "node-role.kubernetes.io/control-plane:NoSchedule"
+
+# TLS configuration - TO BE CONFIGURED
+# TODO: Add additional Subject Alternative Names if needed
+k3s_tls_san: "{{ K3S_TLS_SAN | default([]) }}"  # TODO: Add additional SANs like domain names
+
+# ETCD snapshot configuration
+k3s_etcd_snapshot_schedule: "0 */12 * * *"  # Every 12 hours
+k3s_etcd_snapshot_retention: 5
+
+# Firewall rules specific to control plane
+control_plane_ufw_rules:
+  - { rule: "allow", port: "6443", proto: "tcp", src: "{{ worker_nodes_cidr }}" }  # API server from workers
+  - { rule: "allow", port: "2379:2380", proto: "tcp", src: "{{ control_plane_cidr }}" }  # etcd peer communication
+  - { rule: "allow", port: "10250", proto: "tcp", src: "{{ control_plane_cidr }}" }  # kubelet API
+  - { rule: "allow", port: "10259", proto: "tcp", src: "{{ control_plane_cidr }}" }  # kube-scheduler
+  - { rule: "allow", port: "10257", proto: "tcp", src: "{{ control_plane_cidr }}" }  # kube-controller-manager

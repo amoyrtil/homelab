@@ -1,0 +1,44 @@
+---
+# Variables specific to k3s worker nodes
+
+# k3s agent configuration
+k3s_agent_extra_args: []
+
+# Node labels for workers
+k3s_node_labels:
+  node-role.kubernetes.io/worker: "true"
+
+# Node taints for workers (none by default)
+k3s_node_taints: []
+
+# Kubelet configuration for workers
+k3s_kubelet_args:
+  - "--max-pods=250"
+  - "--kube-reserved=cpu=100m,memory=128Mi"
+  - "--system-reserved=cpu=100m,memory=128Mi"
+
+# Kube-proxy configuration
+k3s_kube_proxy_args: []
+
+# NFS client configuration for workers
+nfs_mount_points:
+  - name: "k3s-storage"
+    src: "{{ nfs_server_ip }}:{{ nfs_export_path }}"
+    path: "{{ nfs_mount_base }}/k3s-storage"
+    opts: "{{ nfs_mount_options }}"
+    fstype: "nfs4"
+    state: "mounted"
+
+# NVIDIA driver configuration for GPU workers
+nvidia_driver_version: "550"
+cuda_version: "12.4"
+nvidia_container_toolkit_enable: true
+nvidia_container_runtime_enable: true
+nvidia_skip_if_no_gpu: true
+
+# Firewall rules specific to worker nodes
+worker_ufw_rules:
+  - { rule: "allow", port: "10250", proto: "tcp", src: "{{ control_plane_cidr }}" }  # kubelet API from control plane
+  - { rule: "allow", port: "30000:32767", proto: "tcp" }  # NodePort services
+  - { rule: "allow", port: "80", proto: "tcp" }   # HTTP ingress
+  - { rule: "allow", port: "443", proto: "tcp" }  # HTTPS ingress

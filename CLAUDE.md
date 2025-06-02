@@ -148,7 +148,7 @@ This file provides guidance to Claude Code (claude.Claude/code) when working wit
 * **タスク1.6:** ✅ Ansible `nvidia_driver` ロールの作成 (MS-02ワーカーノードへのNVIDIAドライバ、CUDA Toolkitインストール)。
 * **タスク1.7:** ✅ (オプション) Ansible `docker` ロールの作成 (アプリケーションビルド等でホストにDocker CLIが必要な場合)。
 * **タスク1.8:** ✅ Ansible Playbook群の作成 (`00_prepare_nodes.yml`, `01_install_k3s_cp.yml`, `02_install_k3s_worker.yml`, `site.yml`)。
-* **タスク1.9:** ⏳ Ansibleインベントリファイル (`inventory/production/hosts.yml`, `group_vars/*`) および `ansible.cfg` のテンプレート作成。
+* **タスク1.9:** ✅ Ansibleインベントリファイル (`inventory/production/hosts.yml`, `group_vars/*`) および `ansible.cfg` のテンプレート作成。
 
 **フェーズ2: Kubernetesクラスタ基本設定 (Manifests)**
 *(依存: フェーズ1完了)*
