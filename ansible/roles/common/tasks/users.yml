@@ -1,0 +1,27 @@
+---
+- name: Create admin user
+  user:
+    name: "{{ common_admin_user }}"
+    groups: "{{ common_admin_groups }}"
+    shell: /bin/bash
+    create_home: true
+    append: true
+  tags: users
+
+- name: Set up sudo access for admin user
+  lineinfile:
+    path: /etc/sudoers.d/{{ common_admin_user }}
+    line: "{{ common_admin_user }} ALL=(ALL) NOPASSWD:ALL"
+    create: true
+    mode: '0440'
+    validate: 'visudo -cf %s'
+  tags: users
+
+- name: Create .ssh directory for admin user
+  file:
+    path: "/home/{{ common_admin_user }}/.ssh"
+    state: directory
+    owner: "{{ common_admin_user }}"
+    group: "{{ common_admin_user }}"
+    mode: '0700'
+  tags: users

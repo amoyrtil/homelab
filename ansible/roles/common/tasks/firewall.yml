@@ -1,0 +1,36 @@
+---
+- name: Install ufw
+  apt:
+    name: ufw
+    state: present
+  tags: firewall
+
+- name: Reset ufw to defaults
+  ufw:
+    state: reset
+  tags: firewall
+
+- name: Set ufw default policies
+  ufw:
+    direction: "{{ item.direction }}"
+    policy: "{{ item.policy }}"
+  loop:
+    - { direction: incoming, policy: "{{ common_ufw_default_policy_incoming }}" }
+    - { direction: outgoing, policy: "{{ common_ufw_default_policy_outgoing }}" }
+  tags: firewall
+
+- name: Configure ufw rules
+  ufw:
+    rule: "{{ item.rule }}"
+    port: "{{ item.port | default(omit) }}"
+    proto: "{{ item.proto | default(omit) }}"
+    src: "{{ item.src | default(omit) }}"
+    dest: "{{ item.dest | default(omit) }}"
+  loop: "{{ common_ufw_rules }}"
+  tags: firewall
+
+- name: Enable ufw
+  ufw:
+    state: enabled
+  when: common_ufw_enabled
+  tags: firewall

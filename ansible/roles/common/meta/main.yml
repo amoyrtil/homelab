@@ -1,0 +1,13 @@
+---
+galaxy_info:
+  author: homelab-admin
+  description: Common OS configuration for all nodes
+  company: homelab
+  license: MIT
+  min_ansible_version: 2.9
+  platforms:
+    - name: Ubuntu
+      versions:
+        - 24.04
+
+dependencies: []

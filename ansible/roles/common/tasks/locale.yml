@@ -1,0 +1,17 @@
+---
+- name: Generate locale
+  locale_gen:
+    name: "{{ common_locale }}"
+    state: present
+  tags: locale
+
+- name: Set system locale
+  lineinfile:
+    path: /etc/default/locale
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+    create: true
+  loop:
+    - { regexp: '^LANG=', line: 'LANG={{ common_language }}' }
+    - { regexp: '^LC_ALL=', line: 'LC_ALL={{ common_locale }}' }
+  tags: locale

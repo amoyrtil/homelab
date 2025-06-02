@@ -1,0 +1,21 @@
+---
+- name: Configure SSH daemon
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+    backup: true
+  loop:
+    - { regexp: '^#?Port ', line: 'Port {{ common_ssh_port }}' }
+    - { regexp: '^#?PasswordAuthentication ', line: 'PasswordAuthentication {{ "yes" if common_ssh_password_auth else "no" }}' }
+    - { regexp: '^#?PermitRootLogin ', line: 'PermitRootLogin {{ "yes" if common_ssh_root_login else "no" }}' }
+    - { regexp: '^#?PermitEmptyPasswords ', line: 'PermitEmptyPasswords {{ "yes" if common_ssh_permit_empty_passwords else "no" }}' }
+    - { regexp: '^#?PubkeyAuthentication ', line: 'PubkeyAuthentication yes' }
+    - { regexp: '^#?AuthorizedKeysFile ', line: 'AuthorizedKeysFile .ssh/authorized_keys' }
+  notify: restart sshd
+  tags: ssh
+
+- name: Validate SSH configuration
+  command: sshd -t
+  changed_when: false
+  tags: ssh

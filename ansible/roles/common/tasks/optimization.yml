@@ -1,0 +1,12 @@
+---
+- name: Disable unnecessary services
+  systemd:
+    name: "{{ item }}"
+    enabled: false
+    state: stopped
+  loop:
+    - snapd
+    - apport
+    - whoopsie
+  failed_when: false
+  tags: optimization
