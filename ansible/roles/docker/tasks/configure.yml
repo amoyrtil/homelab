@@ -1,0 +1,40 @@
+---
+- name: Create Docker daemon configuration directory
+  file:
+    path: /etc/docker
+    state: directory
+    mode: '0755'
+  tags: configure
+
+- name: Configure Docker daemon
+  template:
+    src: daemon.json.j2
+    dest: /etc/docker/daemon.json
+    backup: true
+    mode: '0644'
+  notify: restart docker
+  tags: configure
+
+- name: Create Docker systemd service override directory
+  file:
+    path: /etc/systemd/system/docker.service.d
+    state: directory
+    mode: '0755'
+  tags: configure
+
+- name: Configure Docker systemd service override
+  template:
+    src: docker-service-override.conf.j2
+    dest: /etc/systemd/system/docker.service.d/override.conf
+    mode: '0644'
+  notify:
+    - reload systemd
+    - restart docker
+  tags: configure
+
+- name: Configure Docker log rotation
+  template:
+    src: docker-logrotate.j2
+    dest: /etc/logrotate.d/docker
+    mode: '0644'
+  tags: configure

@@ -1,0 +1,48 @@
+---
+- name: Check Docker service status
+  systemd:
+    name: docker
+  register: docker_service_status
+  tags: verify
+
+- name: Display Docker service status
+  debug:
+    msg: "Docker service is {{ docker_service_status.status.ActiveState }}"
+  tags: verify
+
+- name: Check Docker version
+  command: docker --version
+  register: docker_version_check
+  changed_when: false
+  tags: verify
+
+- name: Display Docker version
+  debug:
+    msg: "{{ docker_version_check.stdout }}"
+  tags: verify
+
+- name: Test Docker installation with hello-world
+  command: docker run --rm hello-world
+  register: docker_hello_world
+  changed_when: false
+  become_user: "{{ docker_users[0] }}"
+  tags: verify
+
+- name: Display Docker test result
+  debug:
+    msg: "Docker test {{ 'successful' if 'Hello from Docker!' in docker_hello_world.stdout else 'failed' }}"
+  tags: verify
+
+- name: Check Docker system information
+  command: docker system info
+  register: docker_system_info
+  changed_when: false
+  tags: verify
+
+- name: Display Docker system info summary
+  debug:
+    msg:
+      - "Docker Root Dir: {{ docker_system_info.stdout | regex_search('Docker Root Dir: (.+)', '\\1') | first | default('Not found') }}"
+      - "Storage Driver: {{ docker_system_info.stdout | regex_search('Storage Driver: (.+)', '\\1') | first | default('Not found') }}"
+      - "Cgroup Driver: {{ docker_system_info.stdout | regex_search('Cgroup Driver: (.+)', '\\1') | first | default('Not found') }}"
+  tags: verify

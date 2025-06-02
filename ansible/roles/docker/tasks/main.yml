@@ -1,0 +1,27 @@
+---
+- name: Include Docker repository setup tasks
+  include_tasks: repository.yml
+  when: docker_add_official_repo
+  tags: [docker, repository]
+
+- name: Include Docker installation tasks
+  include_tasks: install.yml
+  tags: [docker, install]
+
+- name: Include Docker configuration tasks
+  include_tasks: configure.yml
+  tags: [docker, configure]
+
+- name: Include Docker Compose installation tasks
+  include_tasks: compose.yml
+  when: docker_compose_install
+  tags: [docker, compose]
+
+- name: Include Docker cleanup tasks
+  include_tasks: cleanup.yml
+  when: docker_enable_cleanup
+  tags: [docker, cleanup]
+
+- name: Include Docker verification tasks
+  include_tasks: verify.yml
+  tags: [docker, verify]

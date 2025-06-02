@@ -1,0 +1,44 @@
+---
+# Default variables for docker role
+
+# Docker version and repository
+docker_edition: "ce"
+docker_packages:
+  - docker-{{ docker_edition }}
+  - docker-{{ docker_edition }}-cli
+  - containerd.io
+  - docker-buildx-plugin
+  - docker-compose-plugin
+
+# Docker repository configuration
+docker_add_official_repo: true
+docker_repo_gpg_key_url: "https://download.docker.com/linux/ubuntu/gpg"
+docker_repo_url: "https://download.docker.com/linux/ubuntu"
+
+# Docker daemon configuration
+docker_daemon_config:
+  log-driver: "json-file"
+  log-opts:
+    max-size: "10m"
+    max-file: "3"
+  storage-driver: "overlay2"
+  exec-opts:
+    - "native.cgroupdriver=systemd"
+  live-restore: true
+  userland-proxy: false
+
+# Docker users
+docker_users:
+  - "{{ common_admin_user | default('homelab') }}"
+
+# Docker service configuration
+docker_service_state: started
+docker_service_enabled: true
+
+# Docker Compose configuration
+docker_compose_install: true
+docker_compose_version: "v2.24.0"
+
+# Docker cleanup configuration
+docker_enable_cleanup: true
+docker_cleanup_schedule: "0 2 * * 0"  # Weekly on Sunday at 2 AM

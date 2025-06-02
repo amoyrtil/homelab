@@ -1,0 +1,31 @@
+---
+- name: Create Docker cleanup script
+  template:
+    src: docker-cleanup.sh.j2
+    dest: /usr/local/bin/docker-cleanup.sh
+    mode: '0755'
+    owner: root
+    group: root
+  tags: cleanup
+
+- name: Create Docker cleanup cron job
+  cron:
+    name: "Docker cleanup"
+    cron_file: docker-cleanup
+    job: "/usr/local/bin/docker-cleanup.sh"
+    minute: "{{ docker_cleanup_schedule.split()[0] }}"
+    hour: "{{ docker_cleanup_schedule.split()[1] }}"
+    day: "{{ docker_cleanup_schedule.split()[2] }}"
+    month: "{{ docker_cleanup_schedule.split()[3] }}"
+    weekday: "{{ docker_cleanup_schedule.split()[4] }}"
+    user: root
+  tags: cleanup
+
+- name: Create Docker cleanup log directory
+  file:
+    path: /var/log/docker-cleanup
+    state: directory
+    mode: '0755'
+    owner: root
+    group: root
+  tags: cleanup

@@ -1,0 +1,27 @@
+{
+  "log-driver": "{{ docker_daemon_config['log-driver'] }}",
+  "log-opts": {
+{% for key, value in docker_daemon_config['log-opts'].items() %}
+    "{{ key }}": "{{ value }}"{{ ',' if not loop.last else '' }}
+{% endfor %}
+  },
+  "storage-driver": "{{ docker_daemon_config['storage-driver'] }}",
+  "exec-opts": [
+{% for opt in docker_daemon_config['exec-opts'] %}
+    "{{ opt }}"{{ ',' if not loop.last else '' }}
+{% endfor %}
+  ],
+  "live-restore": {{ docker_daemon_config['live-restore'] | lower }},
+  "userland-proxy": {{ docker_daemon_config['userland-proxy'] | lower }},
+  "data-root": "/var/lib/docker",
+  "default-address-pools": [
+    {
+      "base": "172.17.0.0/12",
+      "size": 20
+    },
+    {
+      "base": "192.168.0.0/16", 
+      "size": 24
+    }
+  ]
+}
