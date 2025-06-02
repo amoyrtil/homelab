@@ -1,0 +1,39 @@
+---
+# Default variables for nvidia_driver role
+
+# NVIDIA driver configuration
+nvidia_driver_version: "550"  # Driver series version
+nvidia_driver_package: "nvidia-driver-{{ nvidia_driver_version }}"
+
+# CUDA toolkit configuration
+cuda_version: "12.4"
+cuda_toolkit_package: "cuda-toolkit-{{ cuda_version | replace('.', '-') }}"
+
+# Container toolkit configuration
+nvidia_container_toolkit_enable: true
+nvidia_container_runtime_enable: true
+
+# GPU detection and validation
+nvidia_skip_if_no_gpu: true
+nvidia_validate_installation: true
+
+# Repository configuration
+nvidia_add_official_repo: true
+nvidia_repo_gpg_key_url: "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/3bf863cc.pub"
+nvidia_repo_url: "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/"
+
+# Additional packages
+nvidia_additional_packages:
+  - nvidia-utils-{{ nvidia_driver_version }}
+  - libnvidia-decode-{{ nvidia_driver_version }}
+  - libnvidia-encode-{{ nvidia_driver_version }}
+
+# System configuration
+nvidia_modprobe_blacklist:
+  - nouveau
+  - lbm-nouveau
+  - nvidia-drm
+  - nvidia-modeset
+
+# Persistence daemon
+nvidia_persistence_mode: true

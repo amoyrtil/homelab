@@ -1,0 +1,29 @@
+---
+- name: Add NVIDIA GPG key
+  apt_key:
+    url: "{{ nvidia_repo_gpg_key_url }}"
+    state: present
+  tags: repository
+
+- name: Add NVIDIA CUDA repository
+  apt_repository:
+    repo: "deb {{ nvidia_repo_url }} /"
+    state: present
+    filename: nvidia-cuda
+  tags: repository
+
+- name: Update apt cache after adding NVIDIA repository
+  apt:
+    update_cache: true
+    cache_valid_time: 3600
+  tags: repository
+
+- name: Pin NVIDIA packages to NVIDIA repository
+  copy:
+    content: |
+      Package: *
+      Pin: origin developer.download.nvidia.com
+      Pin-Priority: 600
+    dest: /etc/apt/preferences.d/nvidia-repository
+    mode: '0644'
+  tags: repository

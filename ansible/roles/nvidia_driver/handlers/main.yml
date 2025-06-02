@@ -1,0 +1,26 @@
+---
+- name: rebuild initramfs
+  command: update-initramfs -u
+
+- name: reboot system
+  reboot:
+    reboot_timeout: 600
+    connect_timeout: 20
+    test_command: nvidia-smi
+
+- name: restart containerd
+  systemd:
+    name: containerd
+    state: restarted
+
+- name: update ldconfig
+  command: ldconfig
+
+- name: reload systemd
+  systemd:
+    daemon_reload: true
+
+- name: start nvidia-persistenced
+  systemd:
+    name: nvidia-persistenced
+    state: started

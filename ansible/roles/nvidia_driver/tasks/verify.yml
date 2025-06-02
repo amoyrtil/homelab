@@ -1,0 +1,57 @@
+---
+- name: Wait for NVIDIA driver to be loaded
+  shell: nvidia-smi
+  register: nvidia_smi_check
+  retries: 5
+  delay: 10
+  until: nvidia_smi_check.rc == 0
+  tags: verify
+
+- name: Display NVIDIA system information
+  debug:
+    msg: "{{ nvidia_smi_check.stdout_lines }}"
+  tags: verify
+
+- name: Check CUDA installation
+  shell: nvcc --version
+  register: nvcc_check
+  changed_when: false
+  failed_when: false
+  tags: verify
+
+- name: Display CUDA version
+  debug:
+    msg: "{{ nvcc_check.stdout_lines | default(['CUDA not available in PATH']) }}"
+  tags: verify
+
+- name: Test NVIDIA container runtime
+  shell: |
+    if command -v docker >/dev/null 2>&1; then
+      docker run --rm --gpus all nvidia/cuda:{{ cuda_version }}-base-ubuntu22.04 nvidia-smi
+    elif command -v podman >/dev/null 2>&1; then
+      podman run --rm --device nvidia.com/gpu=all nvidia/cuda:{{ cuda_version }}-base-ubuntu22.04 nvidia-smi
+    else
+      echo "Neither Docker nor Podman found for container runtime test"
+    fi
+  register: container_gpu_test
+  when: nvidia_container_toolkit_enable
+  changed_when: false
+  failed_when: false
+  tags: verify
+
+- name: Display container GPU test result
+  debug:
+    msg: "{{ container_gpu_test.stdout_lines | default(['Container runtime test skipped']) }}"
+  when: nvidia_container_toolkit_enable
+  tags: verify
+
+- name: Verify GPU memory and temperature
+  shell: nvidia-smi --query-gpu=name,memory.total,temperature.gpu --format=csv
+  register: gpu_stats
+  changed_when: false
+  tags: verify
+
+- name: Display GPU statistics
+  debug:
+    msg: "{{ gpu_stats.stdout_lines }}"
+  tags: verify

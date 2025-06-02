@@ -1,0 +1,41 @@
+---
+- name: Check for NVIDIA GPU
+  shell: lspci | grep -i nvidia
+  register: nvidia_gpu_check
+  changed_when: false
+  failed_when: false
+  tags: detect
+
+- name: Set NVIDIA GPU presence fact
+  set_fact:
+    nvidia_gpu_present: "{{ nvidia_gpu_check.rc == 0 }}"
+  tags: detect
+
+- name: Display GPU detection result
+  debug:
+    msg: >
+      {% if nvidia_gpu_present %}
+      NVIDIA GPU detected: {{ nvidia_gpu_check.stdout_lines | join(', ') }}
+      {% else %}
+      No NVIDIA GPU detected on this system
+      {% endif %}
+  tags: detect
+
+- name: Skip NVIDIA installation if no GPU present
+  meta: end_play
+  when: not nvidia_gpu_present and nvidia_skip_if_no_gpu
+  tags: detect
+
+- name: Check current NVIDIA driver installation
+  shell: nvidia-smi --query-gpu=driver_version --format=csv,noheader,nounits
+  register: current_nvidia_driver
+  changed_when: false
+  failed_when: false
+  when: nvidia_gpu_present
+  tags: detect
+
+- name: Display current driver version
+  debug:
+    msg: "Current NVIDIA driver version: {{ current_nvidia_driver.stdout | default('Not installed') }}"
+  when: nvidia_gpu_present
+  tags: detect

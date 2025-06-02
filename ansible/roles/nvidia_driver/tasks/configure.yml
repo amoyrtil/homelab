@@ -1,0 +1,42 @@
+---
+- name: Enable NVIDIA persistence mode
+  command: nvidia-smi -pm 1
+  when: nvidia_persistence_mode
+  failed_when: false
+  tags: configure
+
+- name: Create NVIDIA persistence daemon service
+  template:
+    src: nvidia-persistenced.service.j2
+    dest: /etc/systemd/system/nvidia-persistenced.service
+    mode: '0644'
+  when: nvidia_persistence_mode
+  notify:
+    - reload systemd
+    - start nvidia-persistenced
+  tags: configure
+
+- name: Enable and start NVIDIA persistence daemon
+  systemd:
+    name: nvidia-persistenced
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: nvidia_persistence_mode
+  tags: configure
+
+- name: Set GPU performance mode
+  shell: |
+    for gpu in $(nvidia-smi --list-gpus | grep -o 'GPU [0-9]*' | awk '{print $2}'); do
+      nvidia-smi -i $gpu -pl $(nvidia-smi --query-gpu=power.max_limit --format=csv,noheader,nounits -i $gpu)
+      nvidia-smi -i $gpu -ac $(nvidia-smi --query-gpu=clocks.max.memory,clocks.max.graphics --format=csv,noheader,nounits -i $gpu | tr ',' ' ')
+    done
+  failed_when: false
+  tags: configure
+
+- name: Create NVIDIA device plugin configuration for Kubernetes
+  template:
+    src: nvidia-device-plugin-config.yaml.j2
+    dest: /etc/kubernetes/nvidia-device-plugin-config.yaml
+    mode: '0644'
+  tags: configure

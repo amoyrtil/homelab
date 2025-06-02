@@ -1,0 +1,40 @@
+---
+- name: Blacklist nouveau driver
+  kernel_blacklist:
+    name: "{{ item }}"
+    state: present
+  loop: "{{ nvidia_modprobe_blacklist }}"
+  notify: rebuild initramfs
+  tags: install
+
+- name: Install NVIDIA driver packages
+  apt:
+    name:
+      - "{{ nvidia_driver_package }}"
+      - "{{ nvidia_additional_packages }}"
+    state: present
+    install_recommends: false
+  notify: reboot system
+  tags: install
+
+- name: Install dkms for driver compilation
+  apt:
+    name: dkms
+    state: present
+  tags: install
+
+- name: Check if reboot is required
+  stat:
+    path: /var/run/reboot-required
+  register: reboot_required_file
+  tags: install
+
+- name: Set reboot required fact
+  set_fact:
+    nvidia_reboot_required: "{{ reboot_required_file.stat.exists }}"
+  tags: install
+
+- name: Display reboot requirement
+  debug:
+    msg: "System reboot {{ 'is required' if nvidia_reboot_required else 'is not required' }} after driver installation"
+  tags: install
