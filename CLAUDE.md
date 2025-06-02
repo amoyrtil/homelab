@@ -143,8 +143,8 @@ This file provides guidance to Claude Code (claude.Claude/code) when working wit
 * **タスク1.1:** ✅ Ansible `common` ロールの作成 (全ノード共通のOS初期設定: timezone, ntp, user, sshd, 基本パッケージ等)。
 * **タスク1.2:** ✅ Ansible `k3s_common` ロールの作成 (k3sインストール前の共通準備: カーネルモジュール有効化, sysctl設定等)。
 * **タスク1.3:** ✅ Ansible `k3s_control_plane` ロールの作成 (k3sサーバーのインストール、HAクラスタ初期化、トークン取得等)。
-* **タスク1.4:** ⏳ Ansible `k3s_worker` ロールの作成 (k3sエージェントのインストール、クラスタへの参加)。
-* **タスク1.5:** ⬜ Ansible `nfs_client` ロールの作成 (ワーカーノードへのNFSクライアントパッケージインストールと設定)。
+* **タスク1.4:** ✅ Ansible `k3s_worker` ロールの作成 (k3sエージェントのインストール、クラスタへの参加)。
+* **タスク1.5:** ⏳ Ansible `nfs_client` ロールの作成 (ワーカーノードへのNFSクライアントパッケージインストールと設定)。
 * **タスク1.6:** ⬜ Ansible `nvidia_driver` ロールの作成 (MS-02ワーカーノードへのNVIDIAドライバ、CUDA Toolkitインストール)。
 * **タスク1.7:** ⬜ (オプション) Ansible `docker` ロールの作成 (アプリケーションビルド等でホストにDocker CLIが必要な場合)。
 * **タスク1.8:** ⬜ Ansible Playbook群の作成 (`00_prepare_nodes.yml`, `01_install_k3s_cp.yml`, `02_install_k3s_worker.yml`, `site.yml`)。

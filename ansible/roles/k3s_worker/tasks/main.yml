@@ -1,0 +1,16 @@
+---
+- name: Include k3s download tasks
+  include_tasks: download.yml
+  tags: [k3s_worker, download]
+
+- name: Include k3s configuration tasks
+  include_tasks: configure.yml
+  tags: [k3s_worker, configure]
+
+- name: Include k3s installation tasks
+  include_tasks: install.yml
+  tags: [k3s_worker, install]
+
+- name: Include k3s verification tasks
+  include_tasks: verify.yml
+  tags: [k3s_worker, verify]

@@ -1,0 +1,14 @@
+---
+galaxy_info:
+  author: homelab-admin
+  description: k3s worker node installation and configuration
+  company: homelab
+  license: MIT
+  min_ansible_version: 2.9
+  platforms:
+    - name: Ubuntu
+      versions:
+        - 24.04
+
+dependencies:
+  - role: k3s_common

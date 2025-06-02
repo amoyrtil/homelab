@@ -1,0 +1,38 @@
+---
+- name: Verify control plane is accessible
+  uri:
+    url: "{{ k3s_server_url }}/healthz"
+    method: GET
+    status_code: 200
+    timeout: 10
+  retries: 5
+  delay: 10
+  tags: install
+
+- name: Install k3s agent
+  shell: |
+    INSTALL_K3S_SKIP_DOWNLOAD=true \
+    INSTALL_K3S_VERSION="{{ k3s_version }}" \
+    /tmp/k3s-install.sh agent \
+    --config="{{ k3s_agent_config_file }}"
+  environment:
+    K3S_URL: "{{ k3s_server_url }}"
+    K3S_TOKEN: "{{ k3s_node_token }}"
+  when: k3s_needs_install
+  tags: install
+
+- name: Enable and start k3s-agent service
+  systemd:
+    name: k3s-agent
+    enabled: true
+    state: started
+    daemon_reload: true
+  tags: install
+
+- name: Wait for k3s-agent to be ready
+  wait_for:
+    port: 10250
+    host: "{{ ansible_default_ipv4.address }}"
+    delay: 10
+    timeout: 300
+  tags: install
