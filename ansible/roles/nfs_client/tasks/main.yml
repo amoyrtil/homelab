@@ -1,0 +1,12 @@
+---
+- name: Include NFS client installation tasks
+  include_tasks: install.yml
+  tags: [nfs_client, install]
+
+- name: Include NFS mount configuration tasks
+  include_tasks: mount.yml
+  tags: [nfs_client, mount]
+
+- name: Include NFS client verification tasks
+  include_tasks: verify.yml
+  tags: [nfs_client, verify]

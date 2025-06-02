@@ -1,0 +1,54 @@
+---
+- name: Check if NFS server is reachable
+  wait_for:
+    host: "{{ nfs_server_ip }}"
+    port: 2049
+    timeout: 10
+  when: nfs_server_ip != ""
+  tags: mount
+
+- name: Create NFS mount base directory
+  file:
+    path: "{{ nfs_mount_base }}"
+    state: directory
+    mode: '0755'
+  tags: mount
+
+- name: Create NFS mount point directories
+  file:
+    path: "{{ item.path }}"
+    state: directory
+    mode: '0755'
+  loop: "{{ nfs_mount_points }}"
+  when: nfs_server_ip != ""
+  tags: mount
+
+- name: Configure NFS mounts in /etc/fstab
+  mount:
+    name: "{{ item.path }}"
+    src: "{{ item.src }}"
+    fstype: "{{ item.fstype }}"
+    opts: "{{ item.opts }}"
+    state: "{{ item.state }}"
+    backup: true
+  loop: "{{ nfs_mount_points }}"
+  when: nfs_server_ip != "" and not nfs_enable_autofs
+  tags: mount
+
+- name: Configure autofs master map
+  lineinfile:
+    path: /etc/auto.master
+    line: "{{ nfs_mount_base }} /etc/auto.nfs --timeout={{ nfs_autofs_timeout }}"
+    backup: true
+  when: nfs_enable_autofs and nfs_server_ip != ""
+  notify: restart autofs
+  tags: mount
+
+- name: Configure autofs NFS map
+  template:
+    src: auto.nfs.j2
+    dest: /etc/auto.nfs
+    backup: true
+  when: nfs_enable_autofs and nfs_server_ip != ""
+  notify: restart autofs
+  tags: mount
