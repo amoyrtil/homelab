@@ -1,0 +1,42 @@
+---
+name: Lint YAML
+
+# Trigger on pushes and pull requests affecting YAML files
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - '**.yml'
+      - '**.yaml'
+      - '.github/workflows/lint-yaml.yml'
+      - '.yamllint'
+  pull_request:
+    branches: [ master ]
+    paths:
+      - '**.yml'
+      - '**.yaml'
+      - '.github/workflows/lint-yaml.yml'
+      - '.yamllint'
+
+jobs:
+  yamllint:
+    name: YAML Lint
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: "Create PR comment of reviewdog"
+        uses: reviewdog/action-yamllint@v1.21.0
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          reporter: github-pr-review
+          level: warning
+          yamllint_flags: '-c .yamllint .'
+
+      - name: "lint All The Things in Repository"
+        uses: karancode/yamllint-github-action@v2.0.0
+        with:
+          yamllint_file_or_dir: .
+          yamllint_config_filepath: .yamllint

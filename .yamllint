@@ -1,0 +1,81 @@
+# YAML Lint configuration for homelab k3s cluster
+
+extends: default
+
+# File patterns to include/exclude
+ignore: |
+  .cache/
+  .github/
+  ansible/
+  kubernetes/vendors/
+  **/.*
+
+rules:
+  # Line length - allow longer lines for readability
+  line-length:
+    max: 120
+    level: warning
+
+  # Indentation - use 2 spaces consistently
+  indentation:
+    spaces: 2
+    indent-sequences: true
+    check-multi-line-strings: false
+
+  # Comments - allow more flexible comment formatting
+  comments:
+    min-spaces-from-content: 1
+    require-starting-space: true
+
+  # Empty lines
+  empty-lines:
+    max: 2
+    max-start: 0
+    max-end: 1
+
+  # Brackets
+  brackets:
+    min-spaces-inside: 0
+    max-spaces-inside: 1
+
+  # Braces
+  braces:
+    min-spaces-inside: 0
+    max-spaces-inside: 1
+
+  # Key ordering - don't enforce alphabetical ordering
+  key-ordering: disable
+
+  # Octal values - allow for file permissions
+  octal-values:
+    forbid-implicit-octal: true
+    forbid-explicit-octal: false
+
+  # Quoted strings - be flexible with quotes
+  quoted-strings:
+    quote-type: any
+    required: only-when-needed
+
+  # Truthy values - enforce consistent boolean representation
+  truthy:
+    allowed-values: ['true', 'false', 'yes', 'no']
+    check-keys: true
+
+  # Document start - don't require document start markers
+  document-start:
+    present: false
+
+  # Document end - don't require document end markers  
+  document-end:
+    present: false
+
+  # New line at end of file
+  new-line-at-end-of-file: enable
+
+  # Trailing spaces
+  trailing-spaces: enable
+
+  # Empty values
+  empty-values:
+    forbid-in-block-mappings: false
+    forbid-in-flow-mappings: true
