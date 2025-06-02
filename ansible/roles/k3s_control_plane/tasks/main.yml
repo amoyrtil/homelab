@@ -1,0 +1,20 @@
+---
+- name: Include k3s download tasks
+  include_tasks: download.yml
+  tags: [k3s_control_plane, download]
+
+- name: Include k3s configuration tasks
+  include_tasks: configure.yml
+  tags: [k3s_control_plane, configure]
+
+- name: Include k3s installation tasks
+  include_tasks: install.yml
+  tags: [k3s_control_plane, install]
+
+- name: Include k3s token management tasks
+  include_tasks: token.yml
+  tags: [k3s_control_plane, token]
+
+- name: Include k3s verification tasks
+  include_tasks: verify.yml
+  tags: [k3s_control_plane, verify]
