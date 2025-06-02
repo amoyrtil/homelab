@@ -1,0 +1,35 @@
+---
+# Default variables for k3s_common role
+
+# k3s version
+k3s_version: "v1.33.1+k3s1"
+
+# k3s installation directory
+k3s_bin_dir: "/usr/local/bin"
+k3s_config_dir: "/etc/rancher/k3s"
+k3s_data_dir: "/var/lib/rancher/k3s"
+
+# Container runtime configuration
+k3s_container_runtime: "containerd"
+
+# Network configuration - TO BE CONFIGURED
+# These values need to be set before deployment
+k3s_cluster_cidr: "{{ K3S_CLUSTER_CIDR | default('10.42.0.0/16') }}"  # TODO: Set actual CIDR
+k3s_service_cidr: "{{ K3S_SERVICE_CIDR | default('10.43.0.0/16') }}"  # TODO: Set actual CIDR
+k3s_cluster_dns: "{{ K3S_CLUSTER_DNS | default('10.43.0.10') }}"      # TODO: Set actual DNS IP
+
+# System requirements
+k3s_required_kernel_modules:
+  - br_netfilter
+  - overlay
+  - iptable_filter
+  - iptable_nat
+
+# Kernel parameters required for k3s
+k3s_sysctl_config:
+  net.bridge.bridge-nf-call-iptables: 1
+  net.bridge.bridge-nf-call-ip6tables: 1
+  net.ipv4.ip_forward: 1
+
+# Disable swap for k3s
+k3s_disable_swap: true

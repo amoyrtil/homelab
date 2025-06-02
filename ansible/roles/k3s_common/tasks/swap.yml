@@ -1,0 +1,25 @@
+---
+- name: Disable swap immediately
+  command: swapoff -a
+  when: k3s_disable_swap and ansible_swaptotal_mb > 0
+  tags: swap
+
+- name: Remove swap entries from /etc/fstab
+  lineinfile:
+    path: /etc/fstab
+    regexp: '.*swap.*'
+    state: absent
+  when: k3s_disable_swap
+  tags: swap
+
+- name: Check if swap is disabled
+  command: swapon --show
+  register: swap_status
+  changed_when: false
+  failed_when: false
+  tags: swap
+
+- name: Display swap status
+  debug:
+    msg: "Swap status: {{ 'disabled' if swap_status.stdout == '' else 'enabled' }}"
+  tags: swap
