@@ -1,6 +1,6 @@
 ---
 - name: Generate locale
-  locale_gen:
+  community.general.locale_gen:
     name: "{{ common_locale }}"
     state: present
   tags: locale

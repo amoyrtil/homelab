@@ -1,6 +1,6 @@
 ---
 - name: Set timezone
-  timezone:
+  community.general.timezone:
     name: "{{ common_timezone }}"
   notify: restart systemd-timesyncd
   tags: timezone
