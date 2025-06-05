@@ -33,4 +33,3 @@ k3s_common_sysctl_config:
 
 # Disable swap for k3s
 k3s_common_disable_swap: true
-
