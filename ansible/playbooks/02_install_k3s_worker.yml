@@ -122,7 +122,7 @@
 
     - name: Display cluster health summary
       debug:
-        msg: 
+        msg:
           - "k3s cluster installation completed successfully"
           - "Control plane nodes: {{ groups['k3s_control_plane'] | length }}"
           - "Worker nodes: {{ groups['k3s_worker'] | length }}"
