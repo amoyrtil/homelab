@@ -1,0 +1,54 @@
+---
+- name: Check NFS mounts
+  command: mount -t nfs4
+  register: nfs_mounts_check
+  changed_when: false
+  failed_when: false
+  when: nfs_client_server_ip != ""
+  tags: verify
+
+- name: Display current NFS mounts
+  debug:
+    msg: "{{ nfs_mounts_check.stdout_lines | default(['No NFS mounts found']) }}"
+  when: nfs_client_server_ip != ""
+  tags: verify
+
+- name: Test NFS mount accessibility
+  stat:
+    path: "{{ item.path }}"
+  register: nfs_mount_test
+  loop: "{{ nfs_mount_points }}"
+  when: nfs_client_server_ip != ""
+  tags: verify
+
+- name: Display NFS mount test results
+  debug:
+    msg: "NFS mount {{ item.item.path }} is {{ 'accessible' if item.stat.exists else 'not accessible' }}"
+  loop: "{{ nfs_mount_test.results | default([]) }}"
+  when: nfs_client_server_ip != ""
+  tags: verify
+
+- name: Create test file on NFS mount
+  copy:
+    content: "NFS test file created by Ansible on {{ ansible_date_time.iso8601 }}"
+    dest: "{{ item.path }}/ansible-nfs-test.txt"
+    mode: '0644'
+  loop: "{{ nfs_mount_points }}"
+  when: nfs_client_server_ip != "" and not nfs_client_enable_autofs
+  register: nfs_write_test
+  failed_when: false
+  tags: verify
+
+- name: Remove test file from NFS mount
+  file:
+    path: "{{ item.path }}/ansible-nfs-test.txt"
+    state: absent
+  loop: "{{ nfs_mount_points }}"
+  when: nfs_client_server_ip != "" and not nfs_client_enable_autofs and nfs_write_test is succeeded
+  tags: verify
+
+- name: Display NFS write test results
+  debug:
+    msg: "NFS write test {{ 'passed' if nfs_write_test is succeeded else 'failed' }}"
+  when: nfs_client_server_ip != "" and nfs_write_test is defined
+  tags: verify

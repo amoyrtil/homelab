@@ -1,0 +1,41 @@
+---
+- name: Update apt cache
+  apt:
+    update_cache: true
+    cache_valid_time: 3600
+  tags: install
+
+- name: Install NFS client packages
+  apt:
+    name: "{{ nfs_client_packages }}"
+    state: present
+  tags: install
+
+- name: Enable and start rpcbind service
+  systemd:
+    name: rpcbind
+    enabled: true
+    state: started
+  tags: install
+
+- name: Enable and start nfs-client.target
+  systemd:
+    name: nfs-client.target
+    enabled: true
+    state: started
+  tags: install
+
+- name: Install autofs if enabled
+  apt:
+    name: autofs
+    state: present
+  when: nfs_client_enable_autofs
+  tags: install
+
+- name: Enable and start autofs service
+  systemd:
+    name: autofs
+    enabled: true
+    state: started
+  when: nfs_client_enable_autofs
+  tags: install

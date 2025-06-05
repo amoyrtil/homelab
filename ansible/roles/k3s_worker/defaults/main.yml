@@ -1,0 +1,21 @@
+---
+# Default variables for k3s_worker role
+
+# k3s agent configuration
+k3s_worker_agent_config_file: "{{ k3s_common_config_dir }}/agent.yaml"
+
+# Control plane connection - TO BE CONFIGURED
+# These values need to be set before deployment
+k3s_worker_server_url: "{{ K3S_SERVER_URL | default('https://' + CONTROL_PLANE_VIP + ':6443') }}"  # TODO: Set actual control plane endpoint
+k3s_worker_node_token: "{{ K3S_NODE_TOKEN | default('') }}"  # TODO: Set token from control plane
+
+# Node labels and taints
+k3s_worker_node_labels: {}
+k3s_worker_node_taints: []
+
+# k3s agent startup options
+k3s_worker_agent_extra_args: []
+
+# Container runtime options
+k3s_worker_kubelet_args: []
+k3s_worker_kube_proxy_args: []

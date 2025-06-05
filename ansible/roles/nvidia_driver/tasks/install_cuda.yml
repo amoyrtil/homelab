@@ -1,0 +1,31 @@
+---
+- name: Install CUDA toolkit
+  apt:
+    name: "{{ cuda_toolkit_package }}"
+    state: present
+  tags: cuda
+
+- name: Install CUDA development tools
+  apt:
+    name:
+      - cuda-nvcc-{{ cuda_version | replace('.', '-') }}
+      - cuda-nvtx-{{ cuda_version | replace('.', '-') }}
+      - libcublas-dev-{{ cuda_version | replace('.', '-') }}
+      - libcurand-dev-{{ cuda_version | replace('.', '-') }}
+    state: present
+  tags: cuda
+
+- name: Create CUDA environment configuration
+  template:
+    src: cuda.sh.j2
+    dest: /etc/profile.d/cuda.sh
+    mode: '0644'
+  tags: cuda
+
+- name: Add CUDA paths to ldconfig
+  copy:
+    content: "/usr/local/cuda-{{ cuda_version }}/lib64"
+    dest: /etc/ld.so.conf.d/cuda.conf
+    mode: '0644'
+  notify: update ldconfig
+  tags: cuda

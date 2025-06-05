@@ -1,0 +1,31 @@
+---
+- name: Install required packages for Docker repository
+  apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - lsb-release
+    state: present
+    update_cache: true
+  tags: repository
+
+- name: Add Docker GPG key
+  apt_key:
+    url: "{{ docker_repo_gpg_key_url }}"
+    state: present
+  tags: repository
+
+- name: Add Docker repository
+  apt_repository:
+    repo: "deb [arch=amd64] {{ docker_repo_url }} {{ ansible_distribution_release }} stable"
+    state: present
+    filename: docker
+  tags: repository
+
+- name: Update apt cache after adding Docker repository
+  apt:
+    update_cache: true
+    cache_valid_time: 3600
+  tags: repository

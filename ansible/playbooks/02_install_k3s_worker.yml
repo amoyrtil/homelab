@@ -1,0 +1,160 @@
+---
+# Playbook for installing k3s worker nodes
+# This should be run after 01_install_k3s_cp.yml
+
+- name: Verify control plane is ready before worker installation
+  hosts: k3s_control_plane[0]
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Verify control plane is accessible
+      command: k3s kubectl get nodes
+      register: control_plane_check
+      retries: 5
+      delay: 10
+      until: control_plane_check.rc == 0
+      tags: verify
+
+    - name: Display control plane status
+      debug:
+        msg: "{{ control_plane_check.stdout_lines }}"
+      tags: verify
+
+    - name: Get node token from control plane
+      slurp:
+        src: /var/lib/rancher/k3s/server/node-token
+      register: node_token_b64
+      tags: token
+
+    - name: Set node token fact
+      set_fact:
+        k3s_node_token: "{{ node_token_b64.content | b64decode | trim }}"
+      tags: token
+
+- name: Install k3s on worker nodes
+  hosts: k3s_worker
+  become: true
+  gather_facts: true
+  serial: 2  # Install 2 workers at a time
+
+  pre_tasks:
+    - name: Display worker node installation
+      debug:
+        msg: "Installing k3s agent on worker node: {{ inventory_hostname }}"
+      tags: always
+
+    - name: Verify prerequisites are met
+      assert:
+        that:
+          - k3s_server_url is defined and k3s_server_url != ""
+          - hostvars[groups['k3s_control_plane'][0]]['k3s_node_token'] is defined
+        fail_msg: "k3s_server_url and node token must be available"
+      tags: always
+
+    - name: Set node token from control plane
+      set_fact:
+        k3s_node_token: "{{ hostvars[groups['k3s_control_plane'][0]]['k3s_node_token'] }}"
+      tags: always
+
+    - name: Verify control plane connectivity
+      uri:
+        url: "{{ k3s_server_url }}/healthz"
+        method: GET
+        status_code: 200
+        timeout: 10
+      retries: 5
+      delay: 10
+      tags: connectivity
+
+  roles:
+    - role: k3s_worker
+      tags: [k3s_worker, k3s_agent]
+
+  post_tasks:
+    - name: Wait for kubelet to be ready
+      wait_for:
+        port: 10250
+        host: "{{ ansible_default_ipv4.address }}"
+        delay: 15
+        timeout: 300
+      tags: always
+
+    - name: Display worker node installation completion
+      debug:
+        msg: "k3s agent installed on {{ inventory_hostname }}"
+      tags: always
+
+- name: Verify worker nodes joined the cluster
+  hosts: k3s_control_plane[0]
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Wait for all worker nodes to join
+      command: k3s kubectl get nodes
+      register: cluster_nodes
+      retries: 10
+      delay: 15
+      until: cluster_nodes.stdout | regex_findall('Ready') | length >= (groups['k3s_worker'] | length + groups['k3s_control_plane'] | length)
+      tags: verify
+
+    - name: Display final cluster status
+      debug:
+        msg: "{{ cluster_nodes.stdout_lines }}"
+      tags: verify
+
+    - name: Check node labels and taints
+      command: k3s kubectl get nodes -o wide --show-labels
+      register: node_details
+      tags: verify
+
+    - name: Display node details
+      debug:
+        msg: "{{ node_details.stdout_lines }}"
+      tags: verify
+
+    - name: Verify all nodes are ready
+      command: k3s kubectl get nodes --no-headers
+      register: nodes_status
+      failed_when: "'NotReady' in nodes_status.stdout"
+      tags: verify
+
+    - name: Display cluster health summary
+      debug:
+        msg:
+          - "k3s cluster installation completed successfully"
+          - "Control plane nodes: {{ groups['k3s_control_plane'] | length }}"
+          - "Worker nodes: {{ groups['k3s_worker'] | length }}"
+          - "Total nodes: {{ (groups['k3s_control_plane'] | length) + (groups['k3s_worker'] | length) }}"
+      tags: verify
+
+- name: Label worker nodes with specific roles
+  hosts: k3s_control_plane[0]
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Label GPU worker nodes
+      command: k3s kubectl label nodes {{ item }} node-role.kubernetes.io/gpu=true
+      loop: "{{ groups['k3s_worker'] }}"
+      when: hostvars[item]['ansible_hostname'] in groups.get('gpu', [])
+      failed_when: false
+      tags: labels
+
+    - name: Label storage worker nodes
+      command: k3s kubectl label nodes {{ item }} node-role.kubernetes.io/storage=true
+      loop: "{{ groups['k3s_worker'] }}"
+      when: hostvars[item].get('nfs_client_server_ip') is defined
+      failed_when: false
+      tags: labels
+
+    - name: Display final labeled nodes
+      command: k3s kubectl get nodes --show-labels
+      register: labeled_nodes
+      tags: labels
+
+    - name: Show labeled nodes
+      debug:
+        msg: "{{ labeled_nodes.stdout_lines }}"
+      tags: labels

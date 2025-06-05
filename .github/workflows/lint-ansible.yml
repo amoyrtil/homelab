@@ -1,0 +1,200 @@
+---
+name: Lint Ansible
+
+# Trigger on pushes and pull requests affecting Ansible files
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'ansible/**'
+      - '.github/workflows/lint-ansible.yml'
+  pull_request:
+    branches: [ master ]
+    paths:
+      - 'ansible/**'
+      - '.github/workflows/lint-ansible.yml'
+
+jobs:
+  ansible-lint:
+    name: Ansible Lint and Syntax Check
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install Ansible and dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ansible>=8.0.0
+          pip install ansible-lint>=6.0.0
+          pip install yamllint>=1.32.0
+          pip install jinja2>=3.1.0
+
+      - name: Display versions
+        run: |
+          ansible --version
+          ansible-lint --version
+          yamllint --version
+
+      - name: Create temporary Ansible config
+        run: |
+          mkdir -p /tmp/ansible
+          cat > /tmp/ansible/ansible.cfg << EOF
+          [defaults]
+          host_key_checking = False
+          inventory = inventory/production/hosts.yml
+          roles_path = roles
+          stdout_callback = yaml
+          EOF
+
+      - name: Run ansible-lint on roles
+        run: |
+          cd ansible
+          for role in roles/*/; do
+            if [ -d "$role" ]; then
+              echo "Linting role: $(basename $role)"
+              ansible-lint "$role" --config-file ../.ansible-lint
+            fi
+          done
+
+      - name: Run ansible-lint on playbooks
+        run: |
+          cd ansible
+          for playbook in playbooks/*.yml; do
+            if [ -f "$playbook" ]; then
+              echo "Linting playbook: $(basename $playbook)"
+              ansible-lint "$playbook" --config-file ../.ansible-lint
+            fi
+          done
+
+      - name: Syntax check playbooks
+        run: |
+          cd ansible
+          export ANSIBLE_CONFIG=/tmp/ansible/ansible.cfg
+          for playbook in playbooks/*.yml; do
+            if [ -f "$playbook" ]; then
+              echo "Syntax checking: $(basename $playbook)"
+              ansible-playbook --syntax-check "$playbook" -i inventory/production/hosts.yml
+            fi
+          done
+        continue-on-error: false
+
+      - name: Dry run preparation playbook
+        run: |
+          cd ansible
+          export ANSIBLE_CONFIG=/tmp/ansible/ansible.cfg
+          echo "Running dry run for 00_prepare_nodes.yml"
+          ansible-playbook playbooks/00_prepare_nodes.yml \
+            -i inventory/production/hosts.yml \
+            --check \
+            --diff \
+            --limit localhost \
+            || echo "Expected to fail - no real hosts configured"
+        continue-on-error: true
+
+      - name: Check inventory structure
+        run: |
+          cd ansible
+          export ANSIBLE_CONFIG=/tmp/ansible/ansible.cfg
+          echo "Validating inventory structure"
+          ansible-inventory --list -i inventory/production/hosts.yml > /dev/null
+          echo "Inventory validation successful"
+
+      - name: Validate role dependencies
+        run: |
+          cd ansible
+          echo "Checking role dependencies"
+          for role in roles/*/meta/main.yml; do
+            if [ -f "$role" ]; then
+              echo "Checking dependencies for: $role"
+              yamllint "$role"
+              # Check if dependencies exist
+              python3 -c "
+          import yaml
+          with open('$role', 'r') as f:
+              meta = yaml.safe_load(f)
+          deps = meta.get('dependencies', [])
+          if deps:
+              for dep in deps:
+                  if isinstance(dep, dict):
+                      role_name = dep.get('role', dep.get('name', ''))
+                  else:
+                      role_name = str(dep)
+                  if role_name and role_name != 'common':
+                      role_path = f'roles/{role_name}'
+                      import os
+                      if not os.path.exists(role_path):
+                          print(f'Missing dependency: {role_name}')
+                          exit(1)
+              print(f'All dependencies satisfied for {\"$role\"}')"
+            fi
+          done
+
+  ansible-security:
+    name: Ansible Security Scan
+    runs-on: ubuntu-latest
+    needs: ansible-lint
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install security tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install bandit[toml]>=1.7.0
+
+      - name: Scan for hardcoded secrets
+        run: |
+          echo "Scanning for potential secrets in Ansible files"
+          find ansible/ -name "*.yml" -o -name "*.yaml" | xargs grep -i -n \
+            -E "(password|secret|token|key|api_key).*['\"].*['\"]" \
+            && echo "⚠️  Potential hardcoded secrets found!" && exit 1 \
+            || echo "✅ No hardcoded secrets detected"
+
+      - name: Check for TODO markers requiring configuration
+        run: |
+          echo "Checking for required configuration TODOs"
+          todo_count=$(find ansible/ -name "*.yml" -o -name "*.yaml" | xargs grep -c "TODO:" || true)
+          echo "Found $todo_count TODO items requiring configuration"
+          if [ "$todo_count" -gt 0 ]; then
+            echo "📝 Configuration TODOs found (expected for templates):"
+            find ansible/ -name "*.yml" -o -name "*.yaml" | xargs grep -n "TODO:" || true
+          fi
+
+      - name: Validate secure defaults
+        run: |
+          echo "Validating security-related defaults"
+          cd ansible
+          
+          # Check SSH configuration
+          if grep -r "ssh_password_auth.*true" roles/ 2>/dev/null; then
+            echo "❌ SSH password authentication should be disabled"
+            exit 1
+          fi
+          
+          # Check firewall configuration
+          if ! grep -r "ufw_enabled.*true" roles/ inventory/ 2>/dev/null; then
+            echo "⚠️  Firewall should be enabled by default"
+          fi
+          
+          echo "✅ Security defaults look good"

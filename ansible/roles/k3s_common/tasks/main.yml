@@ -1,0 +1,16 @@
+---
+- name: Include swap configuration tasks
+  include_tasks: swap.yml
+  tags: [k3s_common, swap]
+
+- name: Include kernel modules configuration tasks
+  include_tasks: kernel_modules.yml
+  tags: [k3s_common, kernel]
+
+- name: Include sysctl configuration tasks
+  include_tasks: sysctl.yml
+  tags: [k3s_common, sysctl]
+
+- name: Include k3s preparation tasks
+  include_tasks: k3s_prep.yml
+  tags: [k3s_common, k3s_prep]

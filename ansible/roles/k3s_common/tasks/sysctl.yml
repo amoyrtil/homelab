@@ -1,0 +1,23 @@
+---
+- name: Configure kernel parameters for k3s
+  ansible.posix.sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    state: present
+    reload: true
+    sysctl_file: /etc/sysctl.d/99-k3s.conf
+  loop: "{{ k3s_common_sysctl_config | dict2items }}"
+  tags: sysctl
+
+- name: Verify sysctl parameters
+  command: sysctl {{ item.key }}
+  register: sysctl_check
+  changed_when: false
+  loop: "{{ k3s_common_sysctl_config | dict2items }}"
+  tags: sysctl
+
+- name: Display sysctl verification results
+  debug:
+    msg: "{{ item.stdout }}"
+  loop: "{{ sysctl_check.results }}"
+  tags: sysctl

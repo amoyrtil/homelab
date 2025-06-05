@@ -1,0 +1,8 @@
+[Time]
+{% for server in common_ntp_servers %}
+NTP={{ server }}
+{% endfor %}
+FallbackNTP=pool.ntp.org
+RootDistanceMaxSec=5
+PollIntervalMinSec=32
+PollIntervalMaxSec=2048

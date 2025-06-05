@@ -1,0 +1,140 @@
+---
+# Main site playbook for complete k3s cluster deployment
+# This orchestrates the entire cluster setup process
+
+- name: Display deployment banner
+  hosts: localhost
+  gather_facts: false
+  strategy: linear
+
+  tasks:
+    - name: Display deployment information
+      debug:
+        msg:
+          - "=========================================="
+          - "    k3s Homelab Cluster Deployment"
+          - "=========================================="
+          - "Target Environment: {{ ansible_environment | default('production') }}"
+          - "Control Plane Nodes: {{ groups['k3s_control_plane'] | length }}"
+          - "Worker Nodes: {{ groups['k3s_worker'] | length }}"
+          - "Total Nodes: {{ (groups['k3s_control_plane'] | length) + (groups['k3s_worker'] | length) }}"
+          - "=========================================="
+      tags: always
+
+    - name: Verify inventory groups
+      assert:
+        that:
+          - groups['k3s_control_plane'] is defined
+          - groups['k3s_worker'] is defined
+          - groups['k3s_control_plane'] | length >= 1
+          - groups['k3s_worker'] | length >= 1
+        fail_msg: "Required inventory groups (k3s_control_plane, k3s_worker) must be defined with at least 1 node each"
+      tags: always
+
+    - name: Verify required variables
+      assert:
+        that:
+          - k3s_token is defined and k3s_token != ""
+          - k3s_control_plane_endpoint is defined and k3s_control_plane_endpoint != ""
+        fail_msg: "Required variables (k3s_token, k3s_control_plane_endpoint) must be defined"
+      tags: always
+
+# Phase 1: Prepare all nodes with basic OS configuration
+- name: Phase 1 - Prepare all nodes with basic OS configuration
+  import_playbook: 00_prepare_nodes.yml
+  tags: [phase1, prepare]
+
+- name: Phase 1 completion checkpoint
+  hosts: localhost
+  gather_facts: false
+  run_once: true
+
+  tasks:
+    - name: Display Phase 1 completion
+      debug:
+        msg:
+          - "Phase 1 completed: Node preparation"
+          - "Next: Installing k3s control plane"
+      tags: always
+
+# Phase 2: Install k3s control plane
+- name: Phase 2 - Install k3s control plane
+  import_playbook: 01_install_k3s_cp.yml
+  tags: [phase2, control_plane]
+
+- name: Phase 2 completion checkpoint
+  hosts: localhost
+  gather_facts: false
+  run_once: true
+
+  tasks:
+    - name: Display Phase 2 completion
+      debug:
+        msg:
+          - "Phase 2 completed: k3s control plane installation"
+          - "Next: Installing k3s worker nodes"
+      tags: always
+
+# Phase 3: Install k3s worker nodes
+- name: Phase 3 - Install k3s worker nodes
+  import_playbook: 02_install_k3s_worker.yml
+  tags: [phase3, workers]
+
+- name: Final deployment summary
+  hosts: k3s_control_plane[0]
+  become: true
+  gather_facts: false
+  run_once: true
+
+  tasks:
+    - name: Get final cluster status
+      command: k3s kubectl get nodes -o wide
+      register: final_status
+      tags: always
+
+    - name: Get cluster info
+      command: k3s kubectl cluster-info
+      register: cluster_info
+      tags: always
+
+    - name: Get system pods status
+      command: k3s kubectl get pods -A
+      register: system_pods
+      tags: always
+
+    - name: Display deployment completion summary
+      debug:
+        msg:
+          - "=========================================="
+          - "    k3s Cluster Deployment Completed!"
+          - "=========================================="
+          - ""
+          - "Cluster Nodes:"
+          - "{{ final_status.stdout_lines }}"
+          - ""
+          - "Cluster Information:"
+          - "{{ cluster_info.stdout_lines }}"
+          - ""
+          - "Access Information:"
+          - "- Kubeconfig saved to: ./kubeconfig"
+          - "- Control Plane Endpoint: {{ k3s_control_plane_endpoint }}:6443"
+          - "- Use: kubectl --kubeconfig=./kubeconfig get nodes"
+          - ""
+          - "Next Steps:"
+          - "1. Configure kubectl with the saved kubeconfig"
+          - "2. Deploy cluster infrastructure components"
+          - "3. Deploy applications"
+          - "=========================================="
+      tags: always
+
+    - name: Save deployment completion timestamp
+      copy:
+        content: |
+          k3s Cluster Deployment Completed
+          Timestamp: {{ ansible_date_time.iso8601 }}
+          Control Plane Nodes: {{ groups['k3s_control_plane'] | length }}
+          Worker Nodes: {{ groups['k3s_worker'] | length }}
+          Total Nodes: {{ (groups['k3s_control_plane'] | length) + (groups['k3s_worker'] | length) }}
+        dest: ./deployment-completed.txt
+      delegate_to: localhost
+      tags: always

@@ -1,0 +1,34 @@
+---
+- name: Include GPU detection tasks
+  include_tasks: detect_gpu.yml
+  tags: [nvidia_driver, detect]
+
+- name: Include repository setup tasks
+  include_tasks: repository.yml
+  when: nvidia_gpu_present and nvidia_add_official_repo
+  tags: [nvidia_driver, repository]
+
+- name: Include driver installation tasks
+  include_tasks: install_driver.yml
+  when: nvidia_gpu_present
+  tags: [nvidia_driver, install]
+
+- name: Include CUDA toolkit installation tasks
+  include_tasks: install_cuda.yml
+  when: nvidia_gpu_present
+  tags: [nvidia_driver, cuda]
+
+- name: Include container toolkit installation tasks
+  include_tasks: install_container_toolkit.yml
+  when: nvidia_gpu_present and nvidia_container_toolkit_enable
+  tags: [nvidia_driver, container]
+
+- name: Include configuration tasks
+  include_tasks: configure.yml
+  when: nvidia_gpu_present
+  tags: [nvidia_driver, configure]
+
+- name: Include verification tasks
+  include_tasks: verify.yml
+  when: nvidia_gpu_present and nvidia_validate_installation
+  tags: [nvidia_driver, verify]

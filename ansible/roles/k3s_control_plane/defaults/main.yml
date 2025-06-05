@@ -1,0 +1,31 @@
+---
+# Default variables for k3s_control_plane role
+
+# k3s server configuration
+k3s_control_plane_server_config_file: "{{ k3s_common_config_dir }}/server.yaml"
+k3s_control_plane_server_datastore_endpoint: ""  # Empty for embedded etcd, set for external datastore
+
+# HA configuration - TO BE CONFIGURED
+# These values need to be set before deployment
+k3s_control_plane_cluster_init: "{{ K3S_CLUSTER_INIT | default(false) }}"  # Set to true for first control plane node
+k3s_control_plane_endpoint: "{{ CONTROL_PLANE_VIP | default('') }}"  # TODO: Set actual VIP
+k3s_control_plane_token: "{{ K3S_TOKEN | default('') }}"  # TODO: Set secure token
+
+# Network configuration
+k3s_control_plane_disable_components:
+  - traefik  # We'll install Traefik separately via manifests
+  - servicelb  # We'll use MetalLB or similar
+
+# k3s server startup options
+k3s_control_plane_server_extra_args: []
+
+# TLS configuration
+k3s_control_plane_tls_san: "{{ K3S_TLS_SAN | default([]) }}"  # TODO: Add additional SANs if needed
+
+# Node labels and taints
+k3s_control_plane_node_labels: {}
+k3s_control_plane_node_taints: []
+
+# Backup configuration
+k3s_control_plane_etcd_snapshot_schedule: "0 */12 * * *"  # Every 12 hours
+k3s_control_plane_etcd_snapshot_retention: 5

@@ -1,0 +1,26 @@
+---
+- name: Read k3s token from server
+  slurp:
+    src: "{{ k3s_common_data_dir }}/server/node-token"
+  register: k3s_node_token_b64
+  tags: token
+
+- name: Decode k3s token
+  set_fact:
+    k3s_node_token: "{{ k3s_node_token_b64.content | b64decode | trim }}"
+  tags: token
+
+- name: Save k3s token to local file for other nodes
+  copy:
+    content: "{{ k3s_node_token }}"
+    dest: "./k3s-node-token"
+    mode: '0600'
+  delegate_to: localhost
+  when: k3s_control_plane_cluster_init
+  tags: token
+
+- name: Display token location message
+  debug:
+    msg: "k3s node token saved to ./k3s-node-token for worker nodes"
+  when: k3s_control_plane_cluster_init
+  tags: token

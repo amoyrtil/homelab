@@ -1,0 +1,34 @@
+---
+- name: Create k3s directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - "{{ k3s_config_dir }}"
+    - "{{ k3s_data_dir }}"
+  tags: k3s_prep
+
+- name: Check if k3s is already installed
+  stat:
+    path: "{{ k3s_bin_dir }}/k3s"
+  register: k3s_binary
+  tags: k3s_prep
+
+- name: Get installed k3s version
+  command: "{{ k3s_bin_dir }}/k3s --version"
+  register: k3s_installed_version
+  when: k3s_binary.stat.exists
+  changed_when: false
+  failed_when: false
+  tags: k3s_prep
+
+- name: Display k3s installation status
+  debug:
+    msg: >
+      {% if k3s_binary.stat.exists %}
+      k3s is already installed: {{ k3s_installed_version.stdout.split()[2] }}
+      {% else %}
+      k3s is not installed
+      {% endif %}
+  tags: k3s_prep

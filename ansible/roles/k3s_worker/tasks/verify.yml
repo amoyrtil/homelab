@@ -1,0 +1,39 @@
+---
+- name: Check if node joined cluster (from control plane)
+  uri:
+    url: "{{ k3s_worker_server_url }}/api/v1/nodes"
+    headers:
+      Authorization: "Bearer {{ k3s_worker_node_token }}"
+    method: GET
+    status_code: 200
+  register: cluster_nodes
+  delegate_to: localhost
+  run_once: true
+  tags: verify
+
+- name: Display worker node status
+  debug:
+    msg: "Worker node {{ ansible_hostname }} should appear in cluster nodes"
+  tags: verify
+
+- name: Check k3s-agent service status
+  systemd:
+    name: k3s-agent
+  register: k3s_agent_status
+  tags: verify
+
+- name: Display k3s-agent service status
+  debug:
+    msg: "k3s-agent service is {{ k3s_agent_status.status.ActiveState }}"
+  tags: verify
+
+- name: Check k3s-agent logs for errors
+  command: journalctl -u k3s-agent --no-pager -n 20
+  register: k3s_agent_logs
+  changed_when: false
+  tags: verify
+
+- name: Display recent k3s-agent logs
+  debug:
+    msg: "{{ k3s_agent_logs.stdout_lines[-10:] }}"
+  tags: verify
