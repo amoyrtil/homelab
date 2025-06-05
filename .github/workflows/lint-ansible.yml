@@ -61,11 +61,6 @@ jobs:
           stdout_callback = yaml
           EOF
 
-      - name: Lint YAML files
-        run: |
-          find ansible/ -name "*.yml" -o -name "*.yaml" | xargs yamllint -c .yamllint
-        continue-on-error: false
-
       - name: Run ansible-lint on roles
         run: |
           cd ansible
@@ -75,7 +70,6 @@ jobs:
               ansible-lint "$role" --config-file ../.ansible-lint
             fi
           done
-        continue-on-error: false
 
       - name: Run ansible-lint on playbooks
         run: |
@@ -86,7 +80,6 @@ jobs:
               ansible-lint "$playbook" --config-file ../.ansible-lint
             fi
           done
-        continue-on-error: false
 
       - name: Syntax check playbooks
         run: |
