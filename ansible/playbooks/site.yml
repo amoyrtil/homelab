@@ -41,7 +41,8 @@
       tags: always
 
 # Phase 1: Prepare all nodes with basic OS configuration
-- import_playbook: 00_prepare_nodes.yml
+- name: Phase 1 - Prepare all nodes with basic OS configuration
+  import_playbook: 00_prepare_nodes.yml
   tags: [phase1, prepare]
 
 - name: Phase 1 completion checkpoint
@@ -58,7 +59,8 @@
       tags: always
 
 # Phase 2: Install k3s control plane
-- import_playbook: 01_install_k3s_cp.yml
+- name: Phase 2 - Install k3s control plane
+  import_playbook: 01_install_k3s_cp.yml
   tags: [phase2, control_plane]
 
 - name: Phase 2 completion checkpoint
@@ -75,7 +77,8 @@
       tags: always
 
 # Phase 3: Install k3s worker nodes
-- import_playbook: 02_install_k3s_worker.yml
+- name: Phase 3 - Install k3s worker nodes
+  import_playbook: 02_install_k3s_worker.yml
   tags: [phase3, workers]
 
 - name: Final deployment summary

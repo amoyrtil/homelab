@@ -24,7 +24,7 @@
   tags: mount
 
 - name: Configure NFS mounts in /etc/fstab
-  mount:
+  ansible.posix.mount:
     name: "{{ item.path }}"
     src: "{{ item.src }}"
     fstype: "{{ item.fstype }}"

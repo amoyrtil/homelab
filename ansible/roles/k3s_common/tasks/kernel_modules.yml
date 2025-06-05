@@ -1,9 +1,9 @@
 ---
 - name: Load required kernel modules
-  modprobe:
+  community.general.modprobe:
     name: "{{ item }}"
     state: present
-  loop: "{{ k3s_required_kernel_modules }}"
+  loop: "{{ k3s_common_required_kernel_modules }}"
   tags: kernel
 
 - name: Ensure kernel modules are loaded at boot
@@ -11,7 +11,7 @@
     path: /etc/modules-load.d/k3s.conf
     line: "{{ item }}"
     create: true
-  loop: "{{ k3s_required_kernel_modules }}"
+  loop: "{{ k3s_common_required_kernel_modules }}"
   tags: kernel
 
 - name: Verify kernel modules are loaded
@@ -26,5 +26,5 @@
       - item in lsmod_output.stdout
     fail_msg: "Required kernel module {{ item }} is not loaded"
     quiet: true
-  loop: "{{ k3s_required_kernel_modules }}"
+  loop: "{{ k3s_common_required_kernel_modules }}"
   tags: kernel

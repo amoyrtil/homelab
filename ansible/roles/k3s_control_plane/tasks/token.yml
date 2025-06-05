@@ -1,7 +1,7 @@
 ---
 - name: Read k3s token from server
   slurp:
-    src: "{{ k3s_data_dir }}/server/node-token"
+    src: "{{ k3s_common_data_dir }}/server/node-token"
   register: k3s_node_token_b64
   tags: token
 
@@ -11,16 +11,16 @@
   tags: token
 
 - name: Save k3s token to local file for other nodes
-  local_action:
-    module: copy
+  copy:
     content: "{{ k3s_node_token }}"
     dest: "./k3s-node-token"
     mode: '0600'
-  when: k3s_cluster_init
+  delegate_to: localhost
+  when: k3s_control_plane_cluster_init
   tags: token
 
 - name: Display token location message
   debug:
     msg: "k3s node token saved to ./k3s-node-token for worker nodes"
-  when: k3s_cluster_init
+  when: k3s_control_plane_cluster_init
   tags: token

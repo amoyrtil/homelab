@@ -3,12 +3,12 @@
 
 # NFS server configuration - TO BE CONFIGURED
 # These values need to be set before deployment
-nfs_server_ip: "{{ NFS_SERVER_IP | default('') }}"  # TODO: Set actual NFS server IP
-nfs_export_path: "{{ NFS_EXPORT_PATH | default('/nfs/k3s') }}"  # TODO: Set actual export path
+nfs_client_server_ip: "{{ NFS_SERVER_IP | default('') }}"  # TODO: Set actual NFS server IP
+nfs_client_export_path: "{{ NFS_EXPORT_PATH | default('/nfs/k3s') }}"  # TODO: Set actual export path
 
 # NFS mount configuration
-nfs_mount_base: "/mnt/nfs"
-nfs_mount_options: "rw,sync,hard,intr,rsize=8192,wsize=8192,timeo=14"
+nfs_client_mount_base: "/mnt/nfs"
+nfs_client_mount_options: "rw,sync,hard,intr,rsize=8192,wsize=8192,timeo=14"
 
 # NFS client packages
 nfs_client_packages:
@@ -16,14 +16,15 @@ nfs_client_packages:
   - nfs-utils
 
 # Auto-mount configuration
-nfs_enable_autofs: false
-nfs_autofs_timeout: 300
+nfs_client_enable_autofs: false
+nfs_client_autofs_timeout: 300
 
 # Mount points to create
-nfs_mount_points:
+nfs_client_mount_points:
   - name: "k3s-storage"
-    src: "{{ nfs_server_ip }}:{{ nfs_export_path }}"
-    path: "{{ nfs_mount_base }}/k3s-storage"
-    opts: "{{ nfs_mount_options }}"
+    src: "{{ nfs_client_server_ip }}:{{ nfs_client_export_path }}"
+    path: "{{ nfs_client_mount_base }}/k3s-storage"
+    opts: "{{ nfs_client_mount_options }}"
     fstype: "nfs4"
     state: "mounted"
+

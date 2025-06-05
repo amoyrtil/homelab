@@ -1,9 +1,9 @@
 ---
 - name: Blacklist nouveau driver
-  kernel_blacklist:
+  community.general.kernel_blacklist:
     name: "{{ item }}"
     state: present
-  loop: "{{ nvidia_modprobe_blacklist }}"
+  loop: "{{ nvidia_driver_modprobe_blacklist }}"
   notify: rebuild initramfs
   tags: install
 
@@ -11,7 +11,7 @@
   apt:
     name:
       - "{{ nvidia_driver_package }}"
-      - "{{ nvidia_additional_packages }}"
+      - "{{ nvidia_driver_additional_packages }}"
     state: present
     install_recommends: false
   notify: reboot system
