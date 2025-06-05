@@ -19,4 +19,3 @@ k3s_worker_agent_extra_args: []
 # Container runtime options
 k3s_worker_kubelet_args: []
 k3s_worker_kube_proxy_args: []
-

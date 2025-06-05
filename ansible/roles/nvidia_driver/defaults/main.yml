@@ -37,4 +37,3 @@ nvidia_driver_modprobe_blacklist:
 
 # Persistence daemon
 nvidia_driver_persistence_mode: true
-

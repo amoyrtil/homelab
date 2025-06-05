@@ -27,4 +27,3 @@ nfs_client_mount_points:
     opts: "{{ nfs_client_mount_options }}"
     fstype: "nfs4"
     state: "mounted"
-
