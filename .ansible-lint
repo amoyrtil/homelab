@@ -23,17 +23,6 @@ skip_list:
   - command-instead-of-module  # Some commands are necessary for k3s setup
   - no-changed-when            # Some tasks legitimately change system state
 
-# Rules to enable (in addition to defaults)
-enable_list:
-  - yaml[truthy]               # Enforce consistent boolean values
-  - yaml[brackets]             # Enforce consistent bracket usage
-  - yaml[commas]               # Enforce consistent comma usage
-
-# Warn on specific rules instead of failing
-warn_list:
-  - experimental               # Warn about experimental features
-  - role-name                  # Warn about role naming conventions
-
 # Mock modules and plugins that may not be available in CI
 mock_modules:
   - kubernetes.core.k8s
@@ -50,25 +39,3 @@ tags: []
 
 # Verbosity level
 verbosity: 1
-
-# Loop variable naming
-loop_var_prefix: __
-
-# Rules configuration
-rules:
-  # YAML formatting rules
-  yaml[line-length]:
-    max: 120
-    level: relax
-  
-  # Variable naming rules
-  var-naming[no-role-prefix]:
-    level: moderate
-
-  # File naming rules
-  name[template]:
-    level: moderate
-
-  # Complexity rules
-  complexity[tasks]:
-    max_block_depth: 20
