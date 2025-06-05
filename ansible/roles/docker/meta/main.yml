@@ -4,10 +4,10 @@ galaxy_info:
   description: Docker installation and configuration for application builds
   company: homelab
   license: MIT
-  min_ansible_version: 2.9
+  min_ansible_version: "2.9"
   platforms:
     - name: Ubuntu
       versions:
-        - 24.04
+        - all
 
 dependencies: []

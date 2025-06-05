@@ -4,11 +4,11 @@ galaxy_info:
   description: k3s control plane installation and HA configuration
   company: homelab
   license: MIT
-  min_ansible_version: 2.9
+  min_ansible_version: "2.9"
   platforms:
     - name: Ubuntu
       versions:
-        - 24.04
+        - all
 
 dependencies:
   - role: k3s_common

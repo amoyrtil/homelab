@@ -25,6 +25,7 @@
   command: docker run --rm hello-world
   register: docker_hello_world
   changed_when: false
+  become: true
   become_user: "{{ docker_users[0] }}"
   tags: verify
 
