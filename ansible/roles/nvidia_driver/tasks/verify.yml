@@ -1,6 +1,6 @@
 ---
 - name: Wait for NVIDIA driver to be loaded
-  shell: nvidia-smi
+  command: nvidia-smi
   register: nvidia_smi_check
   retries: 5
   delay: 10
@@ -13,7 +13,7 @@
   tags: verify
 
 - name: Check CUDA installation
-  shell: nvcc --version
+  command: nvcc --version
   register: nvcc_check
   changed_when: false
   failed_when: false
@@ -46,7 +46,7 @@
   tags: verify
 
 - name: Verify GPU memory and temperature
-  shell: nvidia-smi --query-gpu=name,memory.total,temperature.gpu --format=csv
+  command: nvidia-smi --query-gpu=name,memory.total,temperature.gpu --format=csv
   register: gpu_stats
   changed_when: false
   tags: verify

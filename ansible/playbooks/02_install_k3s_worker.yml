@@ -145,7 +145,7 @@
     - name: Label storage worker nodes
       command: k3s kubectl label nodes {{ item }} node-role.kubernetes.io/storage=true
       loop: "{{ groups['k3s_worker'] }}"
-      when: hostvars[item].get('nfs_server_ip') is defined
+      when: hostvars[item].get('nfs_client_server_ip') is defined
       failed_when: false
       tags: labels
 

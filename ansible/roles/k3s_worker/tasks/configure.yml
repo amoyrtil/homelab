@@ -2,7 +2,7 @@
 - name: Create k3s agent configuration
   template:
     src: agent.yaml.j2
-    dest: "{{ k3s_agent_config_file }}"
+    dest: "{{ k3s_worker_agent_config_file }}"
     mode: '0600'
     owner: root
     group: root

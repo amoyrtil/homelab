@@ -1,7 +1,7 @@
 ---
 - name: Verify control plane is accessible
   uri:
-    url: "{{ k3s_server_url }}/healthz"
+    url: "{{ k3s_worker_server_url }}/healthz"
     method: GET
     status_code: 200
     timeout: 10
@@ -12,12 +12,12 @@
 - name: Install k3s agent
   shell: |
     INSTALL_K3S_SKIP_DOWNLOAD=true \
-    INSTALL_K3S_VERSION="{{ k3s_version }}" \
+    INSTALL_K3S_VERSION="{{ k3s_common_version }}" \
     /tmp/k3s-install.sh agent \
-    --config="{{ k3s_agent_config_file }}"
+    --config="{{ k3s_worker_agent_config_file }}"
   environment:
-    K3S_URL: "{{ k3s_server_url }}"
-    K3S_TOKEN: "{{ k3s_node_token }}"
+    K3S_URL: "{{ k3s_worker_server_url }}"
+    K3S_TOKEN: "{{ k3s_worker_node_token }}"
   when: k3s_needs_install
   tags: install
 

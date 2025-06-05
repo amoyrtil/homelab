@@ -2,7 +2,7 @@
 # Default variables for k3s_control_plane role
 
 # k3s server configuration
-k3s_control_plane_server_config_file: "{{ k3s_config_dir }}/server.yaml"
+k3s_control_plane_server_config_file: "{{ k3s_common_config_dir }}/server.yaml"
 k3s_control_plane_server_datastore_endpoint: ""  # Empty for embedded etcd, set for external datastore
 
 # HA configuration - TO BE CONFIGURED

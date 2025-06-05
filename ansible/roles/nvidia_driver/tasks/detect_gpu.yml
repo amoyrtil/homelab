@@ -1,6 +1,8 @@
 ---
 - name: Check for NVIDIA GPU
-  shell: lspci | grep -i nvidia
+  shell: |
+    set -o pipefail
+    lspci | grep -i nvidia
   register: nvidia_gpu_check
   changed_when: false
   failed_when: false
@@ -27,7 +29,7 @@
   tags: detect
 
 - name: Check current NVIDIA driver installation
-  shell: nvidia-smi --query-gpu=driver_version --format=csv,noheader,nounits
+  command: nvidia-smi --query-gpu=driver_version --format=csv,noheader,nounits
   register: current_nvidia_driver
   changed_when: false
   failed_when: false

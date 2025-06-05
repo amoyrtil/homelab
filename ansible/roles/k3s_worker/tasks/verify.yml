@@ -1,9 +1,9 @@
 ---
 - name: Check if node joined cluster (from control plane)
   uri:
-    url: "{{ k3s_server_url }}/api/v1/nodes"
+    url: "{{ k3s_worker_server_url }}/api/v1/nodes"
     headers:
-      Authorization: "Bearer {{ k3s_node_token }}"
+      Authorization: "Bearer {{ k3s_worker_node_token }}"
     method: GET
     status_code: 200
   register: cluster_nodes

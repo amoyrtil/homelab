@@ -29,7 +29,7 @@
   apt:
     name: autofs
     state: present
-  when: nfs_enable_autofs
+  when: nfs_client_enable_autofs
   tags: install
 
 - name: Enable and start autofs service
@@ -37,5 +37,5 @@
     name: autofs
     enabled: true
     state: started
-  when: nfs_enable_autofs
+  when: nfs_client_enable_autofs
   tags: install

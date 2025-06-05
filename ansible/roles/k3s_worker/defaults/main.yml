@@ -2,7 +2,7 @@
 # Default variables for k3s_worker role
 
 # k3s agent configuration
-k3s_worker_agent_config_file: "{{ k3s_config_dir }}/agent.yaml"
+k3s_worker_agent_config_file: "{{ k3s_common_config_dir }}/agent.yaml"
 
 # Control plane connection - TO BE CONFIGURED
 # These values need to be set before deployment

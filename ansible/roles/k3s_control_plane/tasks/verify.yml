@@ -1,7 +1,7 @@
 ---
 - name: Set KUBECONFIG environment
   set_fact:
-    kubeconfig_path: "{{ k3s_data_dir }}/server/kubeconfig.yaml"
+    kubeconfig_path: "{{ k3s_common_data_dir }}/server/kubeconfig.yaml"
   tags: verify
 
 - name: Check k3s cluster status

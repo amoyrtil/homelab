@@ -2,25 +2,25 @@
 - name: Install k3s server (first control plane node)
   shell: |
     INSTALL_K3S_SKIP_DOWNLOAD=true \
-    INSTALL_K3S_VERSION="{{ k3s_version }}" \
+    INSTALL_K3S_VERSION="{{ k3s_common_version }}" \
     /tmp/k3s-install.sh server \
-    --config="{{ k3s_server_config_file }}"
+    --config="{{ k3s_control_plane_server_config_file }}"
   environment:
-    K3S_TOKEN: "{{ k3s_token }}"
-    K3S_CLUSTER_INIT: "{{ k3s_cluster_init | string | lower }}"
-  when: k3s_needs_install and k3s_cluster_init
+    K3S_TOKEN: "{{ k3s_control_plane_token }}"
+    K3S_CLUSTER_INIT: "{{ k3s_control_plane_cluster_init | string | lower }}"
+  when: k3s_needs_install and k3s_control_plane_cluster_init
   tags: install
 
 - name: Install k3s server (additional control plane nodes)
   shell: |
     INSTALL_K3S_SKIP_DOWNLOAD=true \
-    INSTALL_K3S_VERSION="{{ k3s_version }}" \
+    INSTALL_K3S_VERSION="{{ k3s_common_version }}" \
     /tmp/k3s-install.sh server \
-    --config="{{ k3s_server_config_file }}"
+    --config="{{ k3s_control_plane_server_config_file }}"
   environment:
-    K3S_TOKEN: "{{ k3s_token }}"
+    K3S_TOKEN: "{{ k3s_control_plane_token }}"
     K3S_URL: "https://{{ k3s_control_plane_endpoint }}:6443"
-  when: k3s_needs_install and not k3s_cluster_init
+  when: k3s_needs_install and not k3s_control_plane_cluster_init
   tags: install
 
 - name: Enable and start k3s service

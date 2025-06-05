@@ -19,13 +19,13 @@
       {{
         not k3s_binary_stat.stat.exists or
         (k3s_current_version.stdout is defined and
-         k3s_version not in k3s_current_version.stdout)
+         k3s_common_version not in k3s_current_version.stdout)
       }}
   tags: download
 
 - name: Download k3s binary
   get_url:
-    url: "https://github.com/k3s-io/k3s/releases/download/{{ k3s_version }}/k3s"
+    url: "https://github.com/k3s-io/k3s/releases/download/{{ k3s_common_version }}/k3s"
     dest: "{{ k3s_bin_dir }}/k3s"
     mode: '0755'
     owner: root

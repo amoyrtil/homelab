@@ -59,13 +59,13 @@
   roles:
     - role: nfs_client
       tags: [nfs_client, storage]
-      when: nfs_server_ip is defined and nfs_server_ip != ""
+      when: nfs_client_server_ip is defined and nfs_client_server_ip != ""
 
   post_tasks:
     - name: Display NFS client setup completion
       debug:
         msg: "NFS client configured on {{ inventory_hostname }}"
-      when: nfs_server_ip is defined and nfs_server_ip != ""
+      when: nfs_client_server_ip is defined and nfs_client_server_ip != ""
       tags: always
 
 - name: Prepare NVIDIA drivers on worker nodes with GPU

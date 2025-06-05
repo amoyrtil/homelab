@@ -5,7 +5,7 @@
 - name: Display deployment banner
   hosts: localhost
   gather_facts: false
-  run_once: true
+  strategy: linear
 
   tasks:
     - name: Display deployment information
@@ -37,7 +37,6 @@
           - k3s_token is defined and k3s_token != ""
           - k3s_control_plane_endpoint is defined and k3s_control_plane_endpoint != ""
         fail_msg: "Required variables (k3s_token, k3s_control_plane_endpoint) must be defined"
-      run_once: true
       tags: always
 
 # Phase 1: Prepare all nodes with basic OS configuration
