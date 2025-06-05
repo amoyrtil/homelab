@@ -22,6 +22,7 @@ skip_list:
   - risky-file-permissions     # We set permissions explicitly where needed
   - command-instead-of-module  # Some commands are necessary for k3s setup
   - no-changed-when            # Some tasks legitimately change system state
+  - args[module]               # Skip args validation for community collection modules
 
 # Mock modules and plugins that may not be available in CI
 mock_modules:
@@ -29,6 +30,11 @@ mock_modules:
   - kubernetes.core.k8s_info
   - community.general.ufw
   - community.general.timezone
+  - community.general.locale_gen
+  - community.general.modprobe
+  - community.general.kernel_blacklist
+  - ansible.posix.mount
+  - ansible.posix.sysctl
 
 mock_roles:
   - common

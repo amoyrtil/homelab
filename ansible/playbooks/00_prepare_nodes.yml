@@ -6,7 +6,7 @@
   hosts: all
   become: true
   gather_facts: true
-  
+
   pre_tasks:
     - name: Display target nodes
       debug:
