@@ -412,13 +412,13 @@ etcd に継続的な書き込みを発生させ、Step 0 で観測した外れ�
 Secret と ConfigMap の作成と削除を繰り返すループ、または kube-burner を使う。
 raft のレプリケーションが加わることで、単体ベンチとは異なる fsync パターンになる。
 
-- [ ] 30分から60分の連続負荷をかける
-- [ ] `etcd_disk_wal_fsync_duration_seconds` の p99、p99.9、max を記録する
-- [ ] `etcd_disk_backend_commit_duration_seconds` の p99 を記録する
-- [ ] `etcd_server_leader_changes_seen_total` の増加を監視する
-- [ ] `etcd_server_proposals_failed_total` を監視する
-- [ ] **10ms を超える fsync の発生頻度**を記録する（判定を分けるのは最大値ではなく頻度である）
-- [ ] 負荷を止めた定常状態でも同じ指標を30分記録し、負荷時との差を取る
+- [x] 30分から60分の連続負荷をかける
+- [x] `etcd_disk_wal_fsync_duration_seconds` の p99、p99.9、max を記録する
+- [x] `etcd_disk_backend_commit_duration_seconds` の p99 を記録する
+- [x] `etcd_server_leader_changes_seen_total` の増加を監視する
+- [x] `etcd_server_proposals_failed_total` を監視する
+- [x] **10ms を超える fsync の発生頻度**を記録する（判定を分けるのは最大値ではなく頻度である）
+- [x] 負荷を止めた定常状態でも同じ指標を30分記録し、負荷時との差を取る
 
 **USB NIC 起因との切り分け**
 
@@ -431,6 +431,81 @@ cp-1 と cp-2 は USB ドングルで接続する。
 - [ ] `leader_changes` が増えた場合、同時刻に fsync の外れ値があったのかリンクフラップがあったのかを突き合わせる
 
 fsync の外れ値と無関係にリーダー選出が起きるなら、それは UFS ではなく USB NIC の問題であり、S100-WLP の可否判定には使えない。
+
+- [x] `etcd_network_peer_round_trip_time_seconds` の p99 を記録する
+- [x] 両ノードの USB NIC のリンクフラップを記録する
+- [x] `leader_changes` が増えた場合の突き合わせ（増加しなかったため該当なし）
+
+### Step 3 の結果
+
+worker-1（MS-03）は投入していない。
+etcd の fsync 判定にワーカーの有無は効かないため、cp-2 が揃った時点で先に実施した。
+MS-03 は別途セットアップする。
+
+```bash
+talos/phase1/run-step.sh step3-2cp 1800 1800 192.168.20.31 192.168.20.32
+```
+
+事前に両メンバーで `talosctl etcd defrag` を実行した。
+Step 2.5 の負荷で boltdb が 291MB まで膨らみ、利用率が 0.40% まで落ちていたためである。
+断片化した状態のまま測ると、ディスクを測っているのか蓄積した断片化を測っているのか分からなくなる。
+defrag 後は 1.2MB、利用率 100%、alarm なしから開始した。
+
+**2026年8月30日の結果（cp-1 + cp-2、2メンバー、負荷 110 ops/s、30分）**
+
+| 指標 | cp-1（morty / 256GB） | cp-2（jerry / 128GB） |
+| --- | --- | --- |
+| `wal_fsync` 観測数 | 176,608 | 174,722 |
+| p50 | 1.55ms | 0.80ms |
+| **p99** | **7.98ms** | **6.63ms** |
+| p99.9 | 24.62ms | 31.32ms |
+| 最大 | 128ms 以下 | 128ms 以下 |
+| 8ms 超 | 0.962% | 0.871% |
+| 16ms 超 | 0.166% | 0.596% |
+| 32ms 超 | 0.043% | 0.078% |
+| 64ms 超 | 9 件 (0.005%) | 2 件 (0.001%) |
+| **`backend_commit` p99** | **20.72ms** | **28.11ms** |
+| `backend_commit` p99.9 | 44.63ms | 56.87ms |
+| `backend_commit` 25ms 超 | 1.356% | 2.836% |
+| `peer_rtt` p99 | 25.30ms | 25.28ms |
+| **`leader_changes_seen_total`** | **増加なし** | **増加なし** |
+| **`proposals_failed_total`** | **増加なし** | **増加なし** |
+| VIP の移動 | なし（cp-1 が保持） | — |
+| リンクのフラップ | 0 回 | 0 回 |
+
+同条件の定常30分では、cp-1 の 8ms 超が 4,391件中0件、cp-2 が 4,136件中3件だった。
+外れ値は持続書き込みが誘発するものであり、UFS の定常的な性質ではない。
+
+**外れ値は集中していない。**
+15秒区間あたりの 8ms 超は、cp-1 が中央値13件・最大22件、cp-2 が中央値8件・最大25件だった。
+最悪区間でも区間内 fsync の 1.6% 程度で、連続する heartbeat interval を埋める密度には遠い。
+最大値も 128ms 以下であり、election timeout の既定 1000ms に対して1割強にとどまる。
+
+**判定：主判定を両ノードで満たした。**
+2メンバーの quorum では全コミットが両ノードの fsync 完了を待ち、リーダー選出の機会も存在する。
+その条件で30分の持続負荷をかけてリーダー選出も提案失敗も発生しなかった。
+
+副判定では `wal_fsync` p99 が両ノードとも 10ms を下回り、Step 2.5 の単一構成（10.69ms）より改善した。
+外れたのは cp-2 の `backend_commit` p99 の 28.11ms（目安 25ms 未満）だけである。
+plan.md の基準どおり、主判定を満たすため S100-WLP は使えると判定する。
+
+### 判定の枠組みについて
+
+合否基準は「S100-WLP か OptiPlex か」という機種の二択で書かれているが、この枠組みは実態に合っていない。
+
+| 指標（定常30分、無負荷） | cp-1 / morty | cp-2 / jerry |
+| --- | --- | --- |
+| `wal_fsync` 8ms 超 | 0 件 / 4,391 | 3 件 / 4,136 |
+| `wal_fsync` 最大 | 8ms 以下 | 64ms 以下 |
+| `backend_commit` p99.9 | 4.26ms | 29.41ms |
+| `backend_commit` 25ms 超 | 0 件 | 7 件 |
+
+無負荷の時点で個体差が出ている。
+UFS は morty が 256GB の `KLUEG8U1EA-B0C1`、jerry が 128GB の `KLUDG4U1EA-B0C1` で、容量も型番も異なる。
+NIC について info.md が示したのと同じ構図が、ストレージにも現れている。
+
+したがって判定は「機種として使えるか」ではなく「この個体を使うか」で下す。
+S100-WLP という機種に etcd が耐えないという結論は、今回の測定からは出ない。
 
 ここで主判定を満たさなければ Step 5 の緩和策に進む。
 満たした場合も、Step 4 までは機種の決定を保留する。
