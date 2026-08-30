@@ -172,7 +172,11 @@ fio --rw=write --ioengine=sync --fdatasync=1 \
 外れ値は 90ms 前後だったが、この数値は記憶によるもので裏付けが取れていない。
 UFS ストレージの特性による頭打ちと考えられる。
 
-<!-- TODO: fio の出力ログを再確認し、p99 / p99.9 / max と外れ値の発生タイミングを正確に記録する。ログが残っていなければ Step 1 の前に再測定する -->
+この TODO は 2026年8月30日に「再測定しない」と判断して閉じた。
+なお外れ値の存在そのものは、同日の Step 2.5 で etcd のメトリクスとして裏付けが取れている（64ms から 128ms が30分で17件）。
+
+フェーズ1の主判定は Step 3 の etcd メトリクス（`etcd_server_leader_changes_seen_total` と `etcd_server_proposals_failed_total`）であり、fio の単体値は判定を分けない。
+90ms という数値が裏付けを欠くことは、Step 3 の結果を解釈する際の留保として扱う。
 
 **この結果が意味すること**：定常時の性能は etcd の要件を満たしている。
 残る懸念は持続書き込み負荷下でのテールレイテンシに絞られた。
@@ -199,6 +203,32 @@ UCG-Fiber には VLAN 20 だけを先に定義し、検証機を VLAN 20 に載�
 | cp-3 | S100-WLP | 192.168.20.33 | コントロールプレーン | Step 4（Pi-hole 移設後） |
 | worker-1 | MS-03 | 192.168.20.41 | ワーカー | Step 3 |
 | VIP | — | 192.168.20.100 | Kubernetes API エンドポイント | Step 3 |
+
+### 既知の制約: S100-WLP の NIC 障害と USB NIC による回避
+
+3台の S100-WLP のうち2台は、内蔵の Intel I226-V 2.5GbE でリンクが確立しない。
+2026年8月11日の切り分けで、1000BASE-T と 2500BASE-T が使う 4-5 番ペアと 7-8 番ペアの信号経路にハードウェア障害があると判明した。
+2ペアしか使わない 100BASE-TX は成立するため、100Mbps でのみリンクする。
+経緯と否定した仮説の一覧は `info.md` に記録してある。
+
+| 個体 | 役割 | 内蔵 I226-V | 検証で使う NIC |
+| --- | --- | --- | --- |
+| morty | cp-1 | 4ペアの物理層障害。10Mbps でのみ安定 | USB ドングル（`r8152`、1GbE） |
+| jerry | cp-2 | 4ペアの物理層障害。100Mbps では安定 | USB ドングル（`r8152`、1GbE） |
+| rick | cp-3 | 正常。2.5GbE をエラー0で確立 | 内蔵 I226-V |
+
+cp-1 と cp-2 は USB Ethernet ドングルで接続する。
+Talos は `r8152` と `ax88179` をカーネルに含むため、追加の拡張なしに動作する。
+
+machine config ではインターフェースを名前で指定せず、`deviceSelector` で `driver: r8152` を指定する。
+`enp0s20f0u1` という名前は USB ポートの位置に依存し、差し替えのたびに変わるためである。
+
+**USB-C 接続による 2.5GbE 化は、検証中は採らない。**
+ドングルを USB-A から USB-C ポートに移すと 1GbE ではなく 2.5GbE でリンクすることは確認済みである。
+ただし USB-C ポートの空きがなくなるため、給電を USB-C PD から内蔵 PoE に切り替える必要がある。
+内蔵 PoE の PD 回路は、`info.md` §5.5 で 4-5 番ペアと 7-8 番ペアの障害の被疑箇所として挙げた部位そのものである。
+原因が確定していない回路に給電を依存させると、リンクが不安定になったときの切り分けが成立しなくなる。
+帯域はフェーズ1の判定指標ではないため、1GbE のまま進める。
 
 ### コントロールプレーン2台で本試験を行う理由
 
@@ -227,13 +257,44 @@ cp-1（S100-WLP 1台）に `talos-ufs` の ISO で起動し、installer イメ�
 machine:
   install:
     disk: /dev/sda  # UFS デバイス
-    image: ghcr.io/amoyrtil/talos-ufs-installer:<version>
+    image: ghcr.io/amoyrtil/talos-ufs-installer:v1.13.9
 ```
 
-- [ ] Secure Boot を無効化して `talos-ufs` の ISO から起動できること
-- [ ] メンテナンスモードで `talosctl get disks --insecure` に UFS ディスクが現れること
-- [ ] installer イメージによるインストールが完了し、ディスクから起動できること
-- [ ] 使用した `talos-ufs` のバージョンと対応する Talos バージョンを記録する
+- [x] Secure Boot を無効化して `talos-ufs` の ISO から起動できること
+- [x] メンテナンスモードで `talosctl get disks --insecure` に UFS ディスクが現れること
+- [x] installer イメージによるインストールが完了し、ディスクから起動できること
+- [x] 使用した `talos-ufs` のバージョンと対応する Talos バージョンを記録する
+
+**2026年8月30日の実測（cp-1 / morty、メンテナンスモード）**
+
+| 確認項目 | 結果 |
+| --- | --- |
+| Talos バージョン | `v1.13.9-dirty`（SHA `3ebd10a7-dirty`）。上流 v1.13.9 にパッチを当てたビルド |
+| Secure Boot | `SecurityState.SECUREBOOT: false` |
+| UFS ディスク | `sda` / 256GB / transport `ufshcd` / `KLUEG8U1EA-B0C1` |
+| システム拡張 | なし（`talosctl get extensions` が空） |
+
+インストール後のパーティション構成は次のとおりで、ディスクから起動して `STAGE: running` に到達した。
+
+```
+sda1  2.6 GB  vfat       EFI
+sda2  1.0 MB  talosmeta  META
+sda3  105 MB  xfs        STATE
+sda4  253 GB  xfs        EPHEMERAL
+```
+
+EFI が 2.6GB で作られている点が、talos-ufs のパッチが効いている証拠である。
+標準 Talos は EFI パーティションを 100MiB 固定で作るため、4096バイトセクタの UFS では成立しない。
+
+インストール前の `/dev/sda` には Ubuntu 24.04 が残っていた（vfat 1.1GB と ext4 255GB）。
+旧 GPT と旧 EFI の残骸を残さないよう `machine.install.wipe: true` でゼロクリアしてから導入した。
+
+ISO に拡張は一つも含まれていない。
+フェーズ1のコントロールプレーンは etcd を動かすだけで拡張を必要としないため、この時点では支障にならない。
+ただし talos-ufs はカスタムビルドであり、Image Factory による拡張の追加が使えない。
+将来コントロールプレーンに拡張が要る場合は、talos-ufs 側でイメージを作り直す必要がある。
+
+<!-- TODO: talos-ufs の installer イメージに拡張を後付けできるか（Talos の imager が使えるか）を確認する。フェーズ1では不要だが、フェーズ2で CP ノードに iscsi-tools などが要る場合に効く -->
 
 ### Step 2: 単一コントロールプレーンでのメトリクス取得経路の確立
 
@@ -253,9 +314,93 @@ cluster:
 
 これは検証専用の設定であり、本構築には持ち込まない。
 
-- [ ] `talosctl -n 192.168.20.31 etcd status` が応答すること
-- [ ] `curl http://192.168.20.31:2381/metrics` で etcd メトリクスが取得できること
-- [ ] 取得したメトリクスを継続記録する手段を用意する（Prometheus、または定期的な curl とログ保存）
+- [x] `talosctl -n 192.168.20.31 etcd status` が応答すること
+- [x] `curl http://192.168.20.31:2381/metrics` で etcd メトリクスが取得できること
+- [x] 取得したメトリクスを継続記録する手段を用意する（Prometheus、または定期的な curl とログ保存）
+
+**2026年8月30日の実測（cp-1 / morty、単一コントロールプレーン）**
+
+| 確認項目 | 結果 |
+| --- | --- |
+| `talosctl etcd status` | 応答あり。メンバー `dd7677abffb26e5f`、自身がリーダー、etcd 3.6.12 |
+| メトリクスエンドポイント | `http://192.168.20.31:2381/metrics` から `etcd_` 系 564 行を取得 |
+| Talos VIP | `192.168.20.100/32` が `enp0s20f0u1` に付与された |
+
+VIP は plan.md では Step 3 で有効化する予定だったが、Step 1 の時点で入れた。
+`controlPlane.endpoint` は証明書と kubeconfig に焼き込まれるため、後から VIP に切り替えると設定一式の再生成になる。
+単一コントロールプレーンでも VIP は成立するため、最初から `https://192.168.20.100:6443` を採用した。
+
+**継続記録の手段**
+
+Prometheus は使わない。
+コントロールプレーン上で動かすと、測定対象そのものに I/O を足すことになるためである。
+代わりに手元の Mac から定期的に curl するスクリプトを置いた。
+
+| ファイル | 役割 |
+| --- | --- |
+| `talos/phase1/collect-etcd-metrics.sh` | 指定間隔で `:2381/metrics` を取得し、判定に使うメトリクスとリンク状態を TSV に追記する |
+| `talos/phase1/analyze-etcd-metrics.py` | 収集結果から主判定の増分と、fsync / commit の分位点および閾値超過の件数を出す |
+
+```bash
+talos/phase1/collect-etcd-metrics.sh runs/step3-load 15 192.168.20.31 192.168.20.32
+talos/phase1/analyze-etcd-metrics.py runs/step3-load
+```
+
+**「10ms 超」の測定について**
+
+etcd の `wal_fsync` ヒストグラムのバケット境界は 1ms から 2 のべき乗で刻まれており、10ms の境界を持たない。
+したがって「10ms を超える fsync の発生頻度」は、そのままでは測れない。
+最も近い実測可能な境界は **8ms** であり、以降はこれを 10ms の代理として扱う。
+8ms は 10ms より厳しい側に倒れているため、判定が甘くなる方向の誤差は生じない。
+
+最大値も同様にバケット単位でしか言えない。
+`max` は「この境界以下」という上限として記録する。
+
+### Step 2.5: 単一コントロールプレーンでの先行負荷試験
+
+cp-2 と worker-1 が揃う前に、cp-1 だけで持続負荷をかけた。
+2台構成のほうが厳しい試験であることは変わらないが、単一構成で落ちるなら2台を待つ必要がない。
+早期に不合格が分かれば機材の判断も早まる、という理由で Step 3 の前に実施した。
+
+負荷は手元の Mac から kubectl で Secret を作っては消すループを20並列で回した。
+コントロールプレーン上に負荷生成器を置いていないのは、測定対象に etcd 以外の I/O を足さないためである（Step 5 の緩和策3と同じ考え方）。
+
+```bash
+talos/phase1/run-step.sh step2-1cp 1800 1800 192.168.20.31
+```
+
+**2026年8月30日の結果（cp-1 / morty、単一コントロールプレーン、負荷 119 ops/s）**
+
+| 指標 | 定常30分 | 負荷30分 |
+| --- | --- | --- |
+| `wal_fsync` 観測数 | 3,182 | 186,337 |
+| `wal_fsync` p50 | 0.57ms | 1.72ms |
+| `wal_fsync` p99 | 1.93ms | 10.69ms |
+| `wal_fsync` p99.9 | 2.55ms | 26.23ms |
+| `wal_fsync` 最大 | 8ms 以下 | 128ms 以下 |
+| 8ms 超の割合 | 0.000% | 1.405% |
+| 16ms 超 | 0 件 | 375 件 (0.201%) |
+| 32ms 超 | 0 件 | 80 件 (0.043%) |
+| 64ms 超 | 0 件 | 17 件 (0.009%) |
+| `backend_commit` p99 | 3.65ms | 21.39ms |
+| `backend_commit` 25ms 超 | 0 件 | 251 件 (1.435%) |
+| `leader_changes_seen_total` | 増加なし | 増加なし |
+| `proposals_failed_total` | 0 | 0 |
+| USB NIC のリンク変化 | なし | なし |
+
+**Step 0 の外れ値は再現した。**
+64ms から 128ms の帯域に30分で17件、およそ1分に0.6回の頻度で発生している。
+「90ms 前後の外れ値が1回」という記憶による記述は、持続負荷下では裏付けが取れたことになる。
+同時に、この頻度と大きさではリーダー選出に至らないことも確認できた。
+
+定常状態では 8ms を超える fsync が3,182件中1件も出ていない。
+外れ値は UFS の定常的な性質ではなく、持続書き込みが誘発するものである。
+
+**この結果の読み方には留保が要る。**
+単一メンバーの etcd には raft のレプリケーションもピア間通信も存在せず、自ノードが常にリーダーであってリーダー選出の機会自体がない。
+したがって `leader_changes_seen_total` が増えないことは、2メンバー構成での同じ結果に比べて弱い証拠にしかならない。
+このステップで確かめられたのは「UFS の fsync 分布が 186,337 サンプルで 128ms 以内に収まる」という**ディスク単体の事実**までである。
+可否の判定は Step 3 で行う。
 
 ### Step 3: コントロールプレーン2台での持続書き込み負荷試験
 
@@ -274,6 +419,18 @@ raft のレプリケーションが加わることで、単体ベンチとは異
 - [ ] `etcd_server_proposals_failed_total` を監視する
 - [ ] **10ms を超える fsync の発生頻度**を記録する（判定を分けるのは最大値ではなく頻度である）
 - [ ] 負荷を止めた定常状態でも同じ指標を30分記録し、負荷時との差を取る
+
+**USB NIC 起因との切り分け**
+
+cp-1 と cp-2 は USB ドングルで接続する。
+このステップの主判定である `etcd_server_leader_changes_seen_total` は、UFS の fsync 遅延だけでなく、raft のピア間通信が滞っても増える。
+切り分けの手段を用意しないと、リーダー選出が起きたときに機種の判定そのものが下せない。
+
+- [ ] `etcd_network_peer_round_trip_time_seconds` の p99 を記録する（ネットワーク側の遅延を fsync 側と分離する）
+- [ ] 両ノードの USB NIC のリンクフラップを記録する（`LinkStatus` の VERSION 増加、または `talosctl dmesg` の carrier 変化）
+- [ ] `leader_changes` が増えた場合、同時刻に fsync の外れ値があったのかリンクフラップがあったのかを突き合わせる
+
+fsync の外れ値と無関係にリーダー選出が起きるなら、それは UFS ではなく USB NIC の問題であり、S100-WLP の可否判定には使えない。
 
 ここで主判定を満たさなければ Step 5 の緩和策に進む。
 満たした場合も、Step 4 までは機種の決定を保留する。
@@ -456,12 +613,16 @@ MS-03 は標準 Talos、S100-WLP は talos-ufs のカスタムビルドを使う
 talos-ufs は上流のリリースを日次で追って自動ビルドするが、ビルドに8時間から9時間かかるため公開は遅れる。
 したがってクラスターの Talos バージョンは、talos-ufs が公開済みのものに合わせる。
 
-2026年8月30日時点で talos-ufs の最新は `v1.13.9-ufs`、上流 Talos の最新安定版も v1.13.9 である。
+2026年8月30日時点で talos-ufs の最新は `v1.13.9`、上流 Talos の最新安定版も v1.13.9 である。
 現時点では揃っているため v1.13.9 を採用する。
+
+talos-ufs のイメージタグに `-ufs` のようなサフィックスは付かない。
+上流のバージョンをそのまま使う（`v1.13.9`）。
+`v1.13.9-ufs` は ghcr 上に存在せず、レジストリが 404 を返す。
 
 | ノード | インストーラーイメージ |
 | --- | --- |
-| cp-1 から cp-3（S100-WLP） | `ghcr.io/amoyrtil/talos-ufs-installer:v1.13.9-ufs` |
+| cp-1 から cp-3（S100-WLP） | `ghcr.io/amoyrtil/talos-ufs-installer:v1.13.9` |
 | worker-1（MS-03） | `factory.talos.dev/installer/<schematic-id>:v1.13.9` |
 
 この2つを Renovate で個別に追跡すると、片方だけ更新されてバージョンがずれる。
