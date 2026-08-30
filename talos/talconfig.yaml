@@ -1,0 +1,59 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/budimanjojo/talhelper/master/pkg/config/schemas/talconfig.json
+---
+clusterName: homelab
+talosVersion: v1.13.9
+kubernetesVersion: v1.36.2
+endpoint: https://192.168.20.100:6443
+
+allowSchedulingOnControlPlanes: false
+
+# cp-2 / cp-3 を後から足したときに証明書を作り直さずに済むよう、
+# 計画上のアドレスを最初からすべて SAN に含めておく。
+additionalApiServerCertSans:
+  - 192.168.20.100
+  - 192.168.20.31
+  - 192.168.20.32
+  - 192.168.20.33
+  - 127.0.0.1
+
+nodes:
+  # cp-1 = morty。内蔵 I226-V は 4-5 / 7-8 ペアの物理層障害があるため USB ドングルを使う。
+  # 詳細は docs/plan.md「既知の制約: S100-WLP の NIC 障害と USB NIC による回避」を参照。
+  - hostname: cp-1
+    ipAddress: 192.168.20.31
+    controlPlane: true
+    installDisk: /dev/sda # UFS デバイス
+    talosImageURL: ghcr.io/amoyrtil/talos-ufs-installer
+    nameservers:
+      - 192.168.20.1
+    certSANs:
+      - 192.168.20.31
+      - 192.168.20.100
+    networkInterfaces:
+      # インターフェース名は USB ポートの位置で変わるため、ドライバで選択する。
+      - deviceSelector:
+          driver: r8152
+        addresses:
+          - 192.168.20.31/24
+        routes:
+          - network: 0.0.0.0/0
+            gateway: 192.168.20.1
+        vip:
+          ip: 192.168.20.100
+    patches:
+      # 旧 Ubuntu の GPT と EFI パーティションが残っているためディスクをゼロクリアする。
+      # S100-WLP は 4096 バイトセクタで EFI の扱いが特殊なので、残骸を残さない。
+      - |-
+        machine:
+          install:
+            wipe: true
+
+controlPlane:
+  patches:
+    # フェーズ1の検証専用。認証なしの etcd メトリクスエンドポイントを開ける。
+    # 本構築には持ち込まない。
+    - |-
+      cluster:
+        etcd:
+          extraArgs:
+            listen-metrics-urls: http://0.0.0.0:2381

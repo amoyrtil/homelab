@@ -1,2 +1,12 @@
 .DS_Store
 /tmp
+
+# talhelper が生成する平文の machine config と kubeconfig
+talos/clusterconfig/
+
+# 暗号化前の平文シークレット
+talos/talsecret.yaml
+talos/talenv.yaml
+
+# フェーズ1の測定結果
+talos/phase1/runs/
