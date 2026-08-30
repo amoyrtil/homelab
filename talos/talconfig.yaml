@@ -40,9 +40,33 @@ nodes:
             gateway: 192.168.20.1
         vip:
           ip: 192.168.20.100
+
+  # cp-2 = jerry。morty と同じく内蔵 I226-V に物理層障害があるため USB ドングルを使う。
+  # UFS は 128GB の KLUDG4U1EA-B0C1 で、morty の 256GB KLUEG8U1EA-B0C1 とは別型番。
+  - hostname: cp-2
+    ipAddress: 192.168.20.32
+    controlPlane: true
+    installDisk: /dev/sda # UFS デバイス
+    talosImageURL: ghcr.io/amoyrtil/talos-ufs-installer
+    nameservers:
+      - 192.168.20.1
+    certSANs:
+      - 192.168.20.32
+      - 192.168.20.100
+    networkInterfaces:
+      - deviceSelector:
+          driver: r8152
+        addresses:
+          - 192.168.20.32/24
+        routes:
+          - network: 0.0.0.0/0
+            gateway: 192.168.20.1
+        vip:
+          ip: 192.168.20.100
     patches:
-      # 旧 Ubuntu の GPT と EFI パーティションが残っているためディスクをゼロクリアする。
-      # S100-WLP は 4096 バイトセクタで EFI の扱いが特殊なので、残骸を残さない。
+      # 旧 Ubuntu の GPT と EFI パーティションが残っているためゼロクリアする。
+      # インストール完了後にこのパッチは外す。残したままだと将来の
+      # talosctl upgrade で installer が再びディスクを消しに行く。
       - |-
         machine:
           install:
