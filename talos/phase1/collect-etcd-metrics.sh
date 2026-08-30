@@ -17,6 +17,11 @@ NODES=("$@")
 mkdir -p "$OUT"
 METRICS="$OUT/metrics.tsv"
 LINKS="$OUT/links.tsv"
+VIPLOG="$OUT/vip.tsv"
+
+# Talos VIP は etcd のリーダー選出でノード間を移る。
+# つまり VIP の移動そのものが fsync 遅延の影響を受ける可観測な挙動になる。
+VIP_ADDR="${VIP_ADDR:-192.168.20.100}"
 
 # 記録するメトリクスを絞る。全文だと1回 170KB を超えて解析が重くなる。
 FILTER='^etcd_disk_wal_fsync_duration_seconds_(bucket|sum|count)'
@@ -46,6 +51,15 @@ while true; do
           /^    linkState: / { if (drv=="r8152" || drv=="igc" || drv=="i40e" || drv=="r8169")
                                  print ts "\t" node "\t" id "\t" ver "\t" $2 "\t" drv }
         ' >> "$LINKS"
+
+    # パイプで grep -q を使うと、マッチ時に talosctl が SIGPIPE で落ちて
+    # pipefail がパイプライン全体を失敗と判定してしまう。文字列一致で見る。
+    addrs=$(talosctl -n "$n" get addresses 2>/dev/null || true)
+    case "$addrs" in
+      *"$VIP_ADDR"*) held=yes ;;
+      *)             held=no  ;;
+    esac
+    printf '%s\t%s\t%s\n' "$TS" "$n" "$held" >> "$VIPLOG"
   done
   sleep "$INTERVAL"
 done

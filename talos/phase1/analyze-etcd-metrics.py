@@ -167,6 +167,25 @@ def main():
         else:
             print(f"  {ms(NEAR_10MS)} 超は全区間で発生していません")
 
+    vip = os.path.join(d, "vip.tsv")
+    if os.path.exists(vip):
+        holder, moves = None, []
+        with open(vip) as f:
+            for line in f:
+                p = line.rstrip("\n").split("\t")
+                if len(p) != 3 or p[2] != "yes":
+                    continue
+                if holder != p[1]:
+                    moves.append((p[0], holder, p[1]))
+                    holder = p[1]
+        print("\nVIP の保持")
+        if len(moves) <= 1:
+            print(f"  {holder} が保持したまま移動なし")
+        else:
+            for ts, old_n, new_n in moves[1:]:
+                print(f"  {ts}  {old_n} -> {new_n}")
+            print("  VIP は etcd のリーダー選出で移る。leader_changes と突き合わせること。")
+
     links = os.path.join(d, "links.tsv")
     if os.path.exists(links):
         seen, flaps = {}, []
