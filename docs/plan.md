@@ -75,12 +75,12 @@ Pod CIDR に `10.244.0.0/16`、Service CIDR に `10.96.0.0/12` を使う。
 | 30 | 192.168.30.0/24 | Trusted | Windows PC、Mac mini、MacBook Pro、モバイル端末、Apple TV、PS5、Switch 2 x2、HTPC、部屋の LAN ドロップ 3系統 |
 | 40 | 192.168.40.0/24 | Untrusted | 信頼度の低い IoT 家電 |
 | 50 | 192.168.50.0/24 | Camera | G5 Turret Ultra、G6 Entry、NVR |
-| 100 | 192.168.100.0/24 | Guest | ゲスト WiFi |
+| 99 | 192.168.99.0/24 | Guest | ゲスト WiFi |
 
 番号は小さいほど基幹に近い。
 Management を先頭に置き、Server、Trusted と続け、信頼度が下がるにつれて番号を増やす。
-Guest だけを 100 に離してあるのは、今後 VLAN を追加しても Guest が最下位に留まるようにするためである。
-10 番刻みで空けてあるので、たとえば Server と Trusted の間に別の層を挟む余地が残る。
+Guest だけを 99 に離してあるのは、今後 VLAN を追加しても Guest が最下位に留まるようにするためである。
+それ以外は 10 番刻みで空けてあるので、たとえば Server と Trusted の間に別の層を挟む余地が残る。
 
 VLAN 1（UniFi の既定 VLAN）には機器を収容しない。
 
@@ -342,6 +342,7 @@ Talos ではシステム拡張を後から足すのに `talosctl upgrade` とイ
 | --- | --- | --- |
 | CPU | Intel Core Ultra 9 386H（Panther Lake） | `siderolabs/intel-ucode` |
 | iGPU | Xe3 4コア | `siderolabs/xe`（`i915` ではない） |
+| NPU | Panther Lake 内蔵 | `siderolabs/intel-npu` |
 | NIC | Intel X710 10GbE SFP+ x2 | `i40e`（`CONFIG_I40E=m`、VF も `CONFIG_I40EVF=m`） |
 | NIC | Realtek RTL8127 10GbE RJ-45 | `r8169`（`CONFIG_R8169=m`） |
 | NIC | Intel i226-LM 2.5GbE RJ-45 | `igc`（`CONFIG_IGC=m`） |
@@ -368,6 +369,7 @@ customization:
     officialExtensions:
       - siderolabs/intel-ucode
       - siderolabs/xe
+      - siderolabs/intel-npu
       - siderolabs/iscsi-tools
       - siderolabs/util-linux-tools
   extraKernelArgs:
@@ -379,17 +381,23 @@ schematic を登録して ID を得る。
 ```bash
 curl -X POST --data-binary @talos/schematics/ms03-schematic.yaml \
   https://factory.talos.dev/schematics
-# => {"id":"<schematic-id>"}
 ```
 
-得られた ID から ISO とインストーラーイメージが決まる。
+上記の内容で登録すると、次の ID が返る。
 
 ```
-ISO         https://factory.talos.dev/image/<schematic-id>/v1.13.9/metal-amd64.iso
-installer   factory.talos.dev/installer/<schematic-id>:v1.13.9
+b7f363548fe975dbb10e85983906f0c3f44ab3804b6246b677508ca1bb20d1f4
 ```
 
-schematic の内容が同じなら ID も同じになるため、ID をリポジトリに記録しておけば再現できる。
+この ID から ISO とインストーラーイメージが決まる。
+
+```
+ISO         https://factory.talos.dev/image/b7f363548fe975dbb10e85983906f0c3f44ab3804b6246b677508ca1bb20d1f4/v1.13.9/metal-amd64.iso
+installer   factory.talos.dev/installer/b7f363548fe975dbb10e85983906f0c3f44ab3804b6246b677508ca1bb20d1f4:v1.13.9
+```
+
+ID は schematic の内容から決まるため、拡張やカーネル引数を変えると別の ID になる。
+schematic を変更したら ID もこのドキュメントで更新する。
 
 ### 当初案からの変更点
 
@@ -399,11 +407,15 @@ schematic の内容が同じなら ID も同じになるため、ID をリポジ
 | --- | --- | --- |
 | `siderolabs/intel-ucode` | 採用 | Panther Lake のマイクロコード |
 | `siderolabs/xe` | 採用 | Xe3 iGPU の DRM ドライバ。`i915` は旧世代向けなので不要 |
+| `siderolabs/intel-npu` | 採用 | Panther Lake 内蔵 NPU のファームウェアとカーネルモジュール。`xe` と同じく、後から足すと `talosctl upgrade` と再起動が要るため最初に含める |
 | `siderolabs/iscsi-tools` | 採用 | democratic-csi の Synology 向けドライバは iSCSI のみ。将来使う可能性に備える |
 | `siderolabs/util-linux-tools` | 採用 | iscsi-tools と組で使う |
 | `siderolabs/nfs-utils` | **見送り** | この拡張が提供するのは rpcbind と rpc.statd であり、NFSv3 のファイルロック専用である。NFS クライアント自体は Talos のカーネルに組み込まれており v4.2 まで対応済み（`CONFIG_NFS_V4_2=y`）。NFSv4 を使う限り不要 |
 | `intel_iommu=on` | **削除** | Talos のカーネルは `CONFIG_INTEL_IOMMU_DEFAULT_ON=y` で、指定しても挙動が変わらない |
 | `iommu=pt` | 維持 | `CONFIG_IOMMU_DEFAULT_PASSTHROUGH` は未設定のため、指定に意味がある。X710 の SR-IOV や将来の PCIe パススルーで効く |
+
+採用した5つのうち `intel-ucode`、`xe`、`iscsi-tools` は core 区分だが、`intel-npu` と `util-linux-tools` は contrib 区分である。
+上流のサポート水準が異なる点は把握しておく。
 
 discrete GPU を PCIe スロットに載せる場合は `siderolabs/mei`（Intel Arc の前提条件）が追加で要る。
 現時点では載せないため含めない。
@@ -465,12 +477,15 @@ talos-ufs は上流のリリースを日次で追って自動ビルドするが�
 - [ ] RTL8127 が認識されない場合の接続方法を決める（SFP+ か 2.5GbE 暫定運用）
 - [ ] `talosctl get disks --insecure` で NVMe を確認し、インストール先を決める
 - [ ] talhelper で machine config を生成し、`192.168.20.41` を固定で割り当てて適用する
-- [ ] `talosctl get extensions` で4つの拡張がロードされていることを確認する
+- [ ] `talosctl get extensions` で5つの拡張がロードされていることを確認する
 - [ ] 特権 Pod から `/dev/dri` を確認し、Xe3 の DRI デバイスが出ることを確認する
+- [ ] 同じく `/dev/accel` を確認し、NPU のデバイスが出ることを確認する
 - [ ] 10GbE で DS923+ との実効スループットを測る
 
-Intel Quick Sync を使うワークロードは初期スコープ外だが、`xe` 拡張を最初から入れておくことで、後から拡張を追加する再起動を避けられる。
-Intel Device Plugin が `xe` ドライバのデバイスをどう公開するかは、実際に使う段階で確認する。
+Intel Quick Sync と NPU を使うワークロードは初期スコープ外である。
+それでも `xe` と `intel-npu` を最初の ISO に含めるのは、後から拡張を足すと `talosctl upgrade` と再起動が要るためである。
+カーネルモジュールとファームウェアは拡張が用意するが、コンテナからアクセラレータを使うためのユーザー空間は別途要る。
+Intel Device Plugin が `xe` と NPU のデバイスをどう公開するかは、実際に使う段階で確認する。
 
 ## フェーズ2以降: 本構築
 
