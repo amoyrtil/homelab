@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="6246" height="1240" viewBox="-130 -305 6246.4 1240">
-<rect x="-130" y="-305" width="6246.4" height="1240" fill="hsla(0, 0%, 100%, 1)" />
+<svg xmlns="http://www.w3.org/2000/svg" width="6240" height="1240" viewBox="-130 -305 6240 1240">
+<rect x="-130" y="-305" width="6240" height="1240" fill="hsla(0, 0%, 100%, 1)" />
 <path d="M 2990 -200 L 2990 0" fill="none" stroke="hsla(214, 100%, 50%, 1)" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" />
 <path d="M 2990 0 L 2990 151 L 2990 151 L 2989.935 156.898 L 2989.481 160.852 L 2988.25 163.25 L 2985.852 164.481 L 2981.898 164.935 L 2976 165 L 14 165 L 14 165 L 8.102 165.065 L 4.148 165.519 L 1.75 166.75 L 0.519 169.148 L 0.065 173.102 L 0 179 L 0 260" fill="none" stroke="hsla(214, 100%, 50%, 1)" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" />
 <path d="M 2990 0 L 2990 151 L 2990 151 L 2989.935 156.898 L 2989.481 160.852 L 2988.25 163.25 L 2985.852 164.481 L 2981.898 164.935 L 2976 165 L 274 165 L 274 165 L 268.102 165.065 L 264.148 165.519 L 261.75 166.75 L 260.519 169.148 L 260.065 173.102 L 260 179 L 260 260" fill="none" stroke="hsla(214, 100%, 50%, 1)" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" />
@@ -194,21 +194,21 @@
 <rect x="1788.8" y="835" width="62.4" height="20" rx="4" fill="hsla(0, 0%, 100%, 1)" />
 <rect x="2045.2" y="835" width="69.6" height="20" rx="4" fill="hsla(0, 0%, 100%, 1)" />
 <rect x="2323.2" y="835" width="33.6" height="20" rx="4" fill="hsla(0, 0%, 100%, 1)" />
-<rect x="2568.8" y="835" width="62.4" height="20" rx="4" fill="hsla(0, 0%, 100%, 1)" />
-<rect x="2828.8" y="835" width="62.4" height="20" rx="4" fill="hsla(0, 0%, 100%, 1)" />
+<rect x="2561.6" y="835" width="76.8" height="20" rx="4" fill="hsla(0, 0%, 100%, 1)" />
+<rect x="2821.6" y="835" width="76.8" height="20" rx="4" fill="hsla(0, 0%, 100%, 1)" />
 <rect x="3099.6" y="835" width="40.8" height="20" rx="4" fill="hsla(0, 0%, 100%, 1)" />
 <rect x="3352.4" y="575" width="55.2" height="20" rx="4" fill="hsla(0, 0%, 100%, 1)" />
-<rect x="3616" y="575" width="48" height="20" rx="4" fill="hsla(0, 0%, 100%, 1)" />
-<rect x="3876" y="575" width="48" height="20" rx="4" fill="hsla(0, 0%, 100%, 1)" />
-<rect x="4125.2" y="575" width="69.6" height="20" rx="4" fill="hsla(0, 0%, 100%, 1)" />
-<rect x="4385.2" y="575" width="69.6" height="20" rx="4" fill="hsla(0, 0%, 100%, 1)" />
-<rect x="4645.2" y="575" width="69.6" height="20" rx="4" fill="hsla(0, 0%, 100%, 1)" />
+<rect x="3608.8" y="575" width="62.4" height="20" rx="4" fill="hsla(0, 0%, 100%, 1)" />
+<rect x="3868.8" y="575" width="62.4" height="20" rx="4" fill="hsla(0, 0%, 100%, 1)" />
+<rect x="4071.2" y="575" width="177.6" height="20" rx="4" fill="hsla(0, 0%, 100%, 1)" />
+<rect x="4331.2" y="575" width="177.6" height="20" rx="4" fill="hsla(0, 0%, 100%, 1)" />
+<rect x="4591.2" y="575" width="177.6" height="20" rx="4" fill="hsla(0, 0%, 100%, 1)" />
 <rect x="5403.6" y="315" width="112.8" height="20" rx="4" fill="hsla(0, 0%, 100%, 1)" />
 <rect x="4880" y="575" width="120" height="20" rx="4" fill="hsla(0, 0%, 100%, 1)" />
 <rect x="5165.2" y="575" width="69.6" height="20" rx="4" fill="hsla(0, 0%, 100%, 1)" />
-<rect x="5403.6" y="575" width="112.8" height="20" rx="4" fill="hsla(0, 0%, 100%, 1)" />
+<rect x="5421.6" y="575" width="76.8" height="20" rx="4" fill="hsla(0, 0%, 100%, 1)" />
 <rect x="5674.4" y="575" width="91.2" height="20" rx="4" fill="hsla(0, 0%, 100%, 1)" />
-<rect x="5923.6" y="575" width="112.8" height="20" rx="4" fill="hsla(0, 0%, 100%, 1)" />
+<rect x="5941.6" y="575" width="76.8" height="20" rx="4" fill="hsla(0, 0%, 100%, 1)" />
 <text x="2990" y="-155" font-size="12" fill="hsla(0,0%,0%,1)" font-family="Inter, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">Internet</text>
 <text x="2990" y="65" font-size="12" fill="hsla(0,0%,0%,1)" font-family="Inter, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">Cloud Gateway Fiber - No Storage</text>
 <text x="0" y="325" font-size="12" fill="hsla(0,0%,0%,1)" font-family="Inter, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">Backup DNS</text>
@@ -224,19 +224,19 @@
 <text x="1820" y="845" font-size="12" fill="hsla(0,0%,0%,1)" font-family="Inter, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">U7 Mesh</text>
 <text x="2080" y="845" font-size="12" fill="hsla(0,0%,0%,1)" font-family="Inter, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">Apple TV</text>
 <text x="2340" y="845" font-size="12" fill="hsla(0,0%,0%,1)" font-family="Inter, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">PS5</text>
-<text x="2600" y="845" font-size="12" fill="hsla(0,0%,0%,1)" font-family="Inter, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">Switch2</text>
-<text x="2860" y="845" font-size="12" fill="hsla(0,0%,0%,1)" font-family="Inter, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">Switch2</text>
+<text x="2600" y="845" font-size="12" fill="hsla(0,0%,0%,1)" font-family="Inter, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">Switch2_1</text>
+<text x="2860" y="845" font-size="12" fill="hsla(0,0%,0%,1)" font-family="Inter, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">Switch2_2</text>
 <text x="3120" y="845" font-size="12" fill="hsla(0,0%,0%,1)" font-family="Inter, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">HTPC</text>
 <text x="3380" y="585" font-size="12" fill="hsla(0,0%,0%,1)" font-family="Inter, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">DS923+</text>
-<text x="3640" y="585" font-size="12" fill="hsla(0,0%,0%,1)" font-family="Inter, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">MS-03</text>
-<text x="3900" y="585" font-size="12" fill="hsla(0,0%,0%,1)" font-family="Inter, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">MS-03</text>
-<text x="4160" y="585" font-size="12" fill="hsla(0,0%,0%,1)" font-family="Inter, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">OptiPlex</text>
-<text x="4420" y="585" font-size="12" fill="hsla(0,0%,0%,1)" font-family="Inter, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">OptiPlex</text>
-<text x="4680" y="585" font-size="12" fill="hsla(0,0%,0%,1)" font-family="Inter, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">OptiPlex</text>
+<text x="3640" y="585" font-size="12" fill="hsla(0,0%,0%,1)" font-family="Inter, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">MS-03_1</text>
+<text x="3900" y="585" font-size="12" fill="hsla(0,0%,0%,1)" font-family="Inter, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">MS-03_2</text>
+<text x="4160" y="585" font-size="12" fill="hsla(0,0%,0%,1)" font-family="Inter, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">EliteDesk 800 G6 Mini_1</text>
+<text x="4420" y="585" font-size="12" fill="hsla(0,0%,0%,1)" font-family="Inter, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">EliteDesk 800 G6 Mini_2</text>
+<text x="4680" y="585" font-size="12" fill="hsla(0,0%,0%,1)" font-family="Inter, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">EliteDesk 800 G6 Mini_3</text>
 <text x="5460" y="325" font-size="12" fill="hsla(0,0%,0%,1)" font-family="Inter, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">Pro Max 16 PoE</text>
 <text x="4940" y="585" font-size="12" fill="hsla(0,0%,0%,1)" font-family="Inter, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">G5 Turret Ultra</text>
 <text x="5200" y="585" font-size="12" fill="hsla(0,0%,0%,1)" font-family="Inter, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">G6 Entry</text>
-<text x="5460" y="585" font-size="12" fill="hsla(0,0%,0%,1)" font-family="Inter, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">1F Dining Room</text>
+<text x="5460" y="585" font-size="12" fill="hsla(0,0%,0%,1)" font-family="Inter, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">1F Dining</text>
 <text x="5720" y="585" font-size="12" fill="hsla(0,0%,0%,1)" font-family="Inter, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">2F Bed Room</text>
-<text x="5980" y="585" font-size="12" fill="hsla(0,0%,0%,1)" font-family="Inter, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">2F Shiori Room</text>
+<text x="5980" y="585" font-size="12" fill="hsla(0,0%,0%,1)" font-family="Inter, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">2F Office</text>
 </svg>
