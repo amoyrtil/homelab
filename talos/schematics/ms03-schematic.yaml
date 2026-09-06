@@ -1,0 +1,22 @@
+# Talos Image Factory schematic for worker-1 (MS-03)
+#
+# schematic ID: b7f363548fe975dbb10e85983906f0c3f44ab3804b6246b677508ca1bb20d1f4
+#
+# ID は内容から決まり、Talos のバージョンには依存しない。
+# この内容を変更したら ID を再取得し、docs/plan.md も更新する。
+#
+#   curl -X POST --data-binary @talos/schematics/ms03-schematic.yaml \
+#     https://factory.talos.dev/schematics
+#
+# 採用理由は docs/plan.md「MS-03 のセットアップ」を参照。
+---
+customization:
+  systemExtensions:
+    officialExtensions:
+      - siderolabs/intel-ucode
+      - siderolabs/xe
+      - siderolabs/intel-npu
+      - siderolabs/iscsi-tools
+      - siderolabs/util-linux-tools
+  extraKernelArgs:
+    - iommu=pt
