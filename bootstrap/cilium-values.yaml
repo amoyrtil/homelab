@@ -1,0 +1,54 @@
+# R2 検証用の Cilium 値。動作確認後に helmfile へ落とす。
+
+# Talos の前提: IPAM は kubernetes モードでなければならない
+ipam:
+  mode: kubernetes
+
+# kube-proxy を完全に置換する
+kubeProxyReplacement: true
+
+# Gateway API の前提条件
+l7Proxy: true
+
+# kube-proxy がいないため、API サーバーへの到達経路を明示する。
+# KubePrism は Talos が各ノードの localhost:7445 で提供する API プロキシで、
+# コントロールプレーンが増えても追従するため実 IP の直書きより適する。
+k8sServiceHost: 127.0.0.1
+k8sServicePort: 7445
+
+# Talos は cgroupv2 と bpffs を既に提供している。Cilium にマウントさせない。
+cgroup:
+  autoMount:
+    enabled: false
+  hostRoot: /sys/fs/cgroup
+bpf:
+  autoMount:
+    enabled: false
+
+# Talos は Kubernetes のワークロードにカーネルモジュールのロードを許さない
+securityContext:
+  capabilities:
+    ciliumAgent:
+      - CHOWN
+      - KILL
+      - NET_ADMIN
+      - NET_RAW
+      - IPC_LOCK
+      - SYS_ADMIN
+      - SYS_RESOURCE
+      - PERFMON
+      - BPF
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    cleanCiliumState:
+      - NET_ADMIN
+      - SYS_ADMIN
+      - SYS_RESOURCE
+
+# Gateway API と LB IPAM は R3 で足す。ここでは CNI と kube-proxy 置換だけを見る。
+
+# コントロールプレーンが1台なので operator も1つでよい
+operator:
+  replicas: 1

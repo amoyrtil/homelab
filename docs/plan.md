@@ -472,7 +472,7 @@ EliteDesk 800 G6 の到着を待つあいだ、いま動いている S100-WLP + 
 ### 検証項目
 
 - [x] **R1: `cni: none` と kube-proxy 無効でクラスターを作る**（2026年9月6日 完了）
-- [ ] **R2: Cilium を kube-proxy 置換・L7 proxy 有効で入れる**
+- [x] **R2: Cilium を kube-proxy 置換・L7 proxy 有効で入れる**（2026年9月6日 完了）
 - [ ] **R3: Cilium の Gateway API と LB IPAM**
 - [ ] **R4: Cilium BGP を UCG-Fiber と対向させる**（UCG-Fiber 側の FRR 設定が要る）
 - [ ] **R5: Longhorn をワーカーにのみ展開する**（レプリカ1）
@@ -519,17 +519,41 @@ cluster:
 
 ### R2 で要る Cilium の設定
 
-kube-proxy がいない状態で Cilium が API サーバーに到達する必要があるため、接続先を明示する。
+Talos は Cilium に対して固有の前提を持つ。
+公式ガイド（Deploy Cilium CNI）が挙げているものと、kube-proxy 不在への対応をまとめる。
 
 | 設定 | 値 | 理由 |
 | --- | --- | --- |
+| `ipam.mode` | `kubernetes` | Talos の要求 |
 | `kubeProxyReplacement` | `true` | kube-proxy を置換する |
 | `l7Proxy` | `true` | Gateway API の前提条件 |
-| `k8sServiceHost` | コントロールプレーンのアドレス | kube-proxy がいないため Service 経由で API に到達できない |
-| `k8sServicePort` | `6443` | 同上 |
+| `k8sServiceHost` | `127.0.0.1` | KubePrism 経由で API に到達する |
+| `k8sServicePort` | `7445` | 同上 |
+| `cgroup.autoMount.enabled` | `false` | Talos が既に cgroupv2 を提供している |
+| `bpf.autoMount.enabled` | `false` | Talos が既に bpffs を提供している |
+| `securityContext.capabilities` | `SYS_MODULE` を除く | Talos はワークロードにカーネルモジュールのロードを許さない |
+
+**`k8sServiceHost` には KubePrism を使う。**
+KubePrism は Talos が各ノードの `127.0.0.1:7445` で提供する API プロキシで、コントロールプレーンが増えても追従する。
+実 IP を直書きするとフェーズ2で3台に増やしたときに書き換えが要るため、こちらが適する。
+`machine.features.kubePrism` は既定で有効であり、`KubePrismStatus` リソースで healthy を確認できる。
 
 導入はまず `helm install` で最小構成を通し、動作を確認してから helmfile に落とす。
 失敗したときに Cilium の問題か helmfile の問題かを切り分けるためである。
+
+**R2 の結果（2026年9月6日、Cilium v1.20.1）**
+
+| 確認項目 | 結果 |
+| --- | --- |
+| Node の状態 | 両ノードとも `Ready` |
+| `KubeProxyReplacement` | `True`（Direct Routing） |
+| Cilium の健全性 | `Modules Health: OK(75)`、`Controller Status: 13/13 healthy` |
+| cilium-envoy | 両ノードで Running（`l7Proxy` が効いている） |
+| ClusterIP 経由の疎通 | `HTTP 200` |
+| CoreDNS の名前解決 | `nginx.default.svc.cluster.local` を解決 |
+| kube-proxy | 不在のまま |
+
+Service の負荷分散を Cilium の eBPF が肩代わりしていることを、kube-proxy 不在の状態で実証した。
 
 ## 現在のクラスター
 
