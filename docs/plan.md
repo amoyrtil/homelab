@@ -799,15 +799,59 @@ EliteDesk への移行のリハーサルにもなる。
 **Phase 3：MS-03 を投入して2台体制**
 
 - [x] `talos/schematics/ms03-schematic.yaml` を作成する
-- [ ] MS-03 を v1.14.0 で構築する（手順は「MS-03 のセットアップ」）
-- [ ] worker-1 がクラスターに参加し Ready になる
-- [ ] 既定の Flannel のまま、単純な Deployment と Service をデプロイして疎通を確認する
+- [x] MS-03 を v1.14.0 で構築する（手順は「MS-03 のセットアップ」）
+- [x] worker-1 がクラスターに参加し Ready になる
+- [x] 既定の Flannel のまま、単純な Deployment と Service をデプロイして疎通を確認する
 
 `allowSchedulingOnControlPlanes` が `false` であるため、ワーカーがなければワークロードは動かない。
 この検証は、MS-03 がクラスターに参加したこと自体の確認を兼ねる。
 
 CNI を Cilium に差し替えるのはフェーズ2の課題として分離する。
 ここで同時に入れると、Pod が動かなかったときに MS-03 側の問題か CNI 側の問題かを切り分けられなくなる。
+
+**結果（2026年9月6日）**
+
+| 項目 | 結果 |
+| --- | --- |
+| Node | `worker-1` が `Ready`、Kubernetes `v1.37.0`、Talos `v1.14.0` |
+| インストール先 | `/dev/nvme0n1`（SKHynix HFS256GDE9X081N 256GB）。EFI は cp-1 と同じ 2.2GB |
+| 拡張 | `intel-ucode` 20260812、`xe`、`intel-npu`、`iscsi-tools` v0.2.0、`util-linux-tools` 2.42.2 の5つがロード。schematic ID も一致 |
+| カーネル引数 | `iommu=pt` が反映 |
+| Pod の配置 | nginx 2レプリカが両方とも worker-1 に載った。cp-1 の control-plane taint が効いている |
+| Service | ClusterIP 経由で `HTTP 200`。Endpoints に2つの Pod IP |
+
+**MS-03 の NIC は4つとも認識された。**
+
+| インターフェース | ドライバ | Vendor:Device | チップ |
+| --- | --- | --- | --- |
+| `eno2` | `igc` | 8086:125b | Intel i226-LM 2.5GbE |
+| `eno3` | `r8169` | 10ec:8127 | Realtek RTL8127 10GbE RJ-45 |
+| `eno4np0` | `i40e` | 8086:1572 | Intel X710 SFP+ #1 |
+| `eno5np1` | `i40e` | 8086:1572 | Intel X710 SFP+ #2 |
+
+RTL8127 が認識されなかった場合の退避先を用意しておくという懸念は、解消した。
+`r8169` がデバイスを掴んでおり、リンクが down なのはケーブルが挿さっていないためである。
+
+現在の接続は X710 の SFP+ #1（`port: DirectAttach`）で、`192.168.20.41` はこのポートに載せている。
+`talconfig.yaml` の `deviceSelector` は MAC で固定した。4つとも同じ OUI の連番であり、名前の対応が起動順で入れ替わりうるためである。
+
+**iGPU は使えるが、NPU はドライバの初期化に失敗する。**
+
+特権 Pod から `/dev/dri` を確認すると `card0` と `renderD128` があり、`xe` 拡張が Xe3 の DRM デバイスを提供している。
+
+一方 `/dev/accel` は存在しない。
+PCI デバイスとしては `0000:00:0b.0` に Panther Lake NPU が見えており、`intel_vpu` モジュールも `live` でロードされている。
+それでも probe が `-EIO` で失敗する。
+
+```
+intel_vpu 0000:00:0b.0: [drm] *ERROR* ivpu_hw_ip_host_ss_configure(): Failed qreqn check: -5
+intel_vpu 0000:00:0b.0: [drm] *ERROR* ivpu_hw_power_up(): Failed to configure host SS: -5
+intel_vpu 0000:00:0b.0: probe with driver intel_vpu failed with error -5
+```
+
+Linux 6.18 の `intel_vpu` が Panther Lake 世代の NPU を扱いきれていないと考えられる。
+NPU を使うワークロードは初期スコープ外であり、この時点では支障にならない。
+使う段になったら、カーネルの更新か BIOS 設定を確認する。
 
 MS-03 の ISO 作成からメンテナンスモードでの NIC とディスクの確認までは、Phase 1 および Phase 2 と並行して進められる。
 
@@ -967,16 +1011,30 @@ cp-2 での検証が通ったため、全ノードのイメージが Image Facto
 
 - [x] `talos/schematics/ms03-schematic.yaml` を作成する
 - [x] Image Factory に POST し、schematic ID をリポジトリに記録する
-- [ ] ISO をダウンロードして USB に書き込む
-- [ ] Secure Boot を無効化して起動し、メンテナンスモードに入る
-- [ ] `talosctl get links --insecure` で4つの NIC が見えることを確認する（X710 x2、RTL8127、i226-LM）
-- [ ] RTL8127 が認識されない場合の接続方法を決める（SFP+ か 2.5GbE 暫定運用）
-- [ ] `talosctl get disks --insecure` で NVMe を確認し、インストール先を決める
-- [ ] talhelper で machine config を生成し、`192.168.20.41` を固定で割り当てて適用する
-- [ ] `talosctl get extensions` で5つの拡張がロードされていることを確認する
-- [ ] 特権 Pod から `/dev/dri` を確認し、Xe3 の DRI デバイスが出ることを確認する
-- [ ] 同じく `/dev/accel` を確認し、NPU のデバイスが出ることを確認する
+- [x] ISO をダウンロードして USB に書き込む
+- [x] Secure Boot を無効化して起動し、メンテナンスモードに入る
+- [x] `talosctl get links --insecure` で4つの NIC が見えることを確認する（X710 x2、RTL8127、i226-LM）
+- [x] RTL8127 が認識されない場合の接続方法を決める（認識されたため不要。現在は X710 の SFP+ に DAC 直結）
+- [x] `talosctl get disks --insecure` で NVMe を確認し、インストール先を決める
+- [x] talhelper で machine config を生成し、`192.168.20.41` を固定で割り当てて適用する
+- [x] `talosctl get extensions` で5つの拡張がロードされていることを確認する
+- [x] 特権 Pod から `/dev/dri` を確認し、Xe3 の DRI デバイスが出ることを確認する
+- [x] 同じく `/dev/accel` を確認する（NPU は probe が `-EIO` で失敗し、デバイスは出ない）
 - [ ] 10GbE で DS923+ との実効スループットを測る
+
+結果は「Talos v1.14 への移行と talos-ufs の存廃」の Phase 3 に記録した。
+
+セットアップ時に2点つまずいた。
+
+**MS-03 を挿したポートが VLAN 20 になっていなかった。**
+DHCP でデフォルト LAN の `192.168.1.116` を取得し、その状態でノード側に `192.168.20.41` を静的設定しても届かない構成になっていた。
+UCG-Fiber 側でポートに VLAN 20 を割り当てて解消した。
+検証構成には「UCG-Fiber の LAN ポートに直結する」としか書いておらず、どのポートを VLAN 20 にしたかを記録していなかったことが原因である。
+EliteDesk 3台を挿すときに同じ手間を踏まないよう、ポートの割り当ても記録する。
+
+**PodSecurity が特権 Pod を拒否する。**
+Talos は Pod Security Admission を既定で有効にしており、`default` namespace では `baseline` が強制される。
+`/dev/dri` の確認のような特権 Pod を動かすには、`pod-security.kubernetes.io/enforce=privileged` を付けた namespace を別に作る必要がある。
 
 Intel Quick Sync と NPU を使うワークロードは初期スコープ外である。
 それでも `xe` と `intel-npu` を最初の ISO に含めるのは、後から拡張を足すと `talosctl upgrade` と再起動が要るためである。
@@ -1010,7 +1068,7 @@ Intel Device Plugin が `xe` と NPU のデバイスをどう公開するかは�
 | CNI | Cilium（kube-proxy 完全置換、eBPF モード） | ノード構成の確定後 |
 | LoadBalancer | Cilium L2 Announcement（Pool: 192.168.20.200-250） | VLAN 20 確定済みのため着手可能 |
 | Ingress | Traefik | CNI の稼働後 |
-| MS-03 の接続 NIC | RTL8127（10G RJ-45）/ X710（SFP+）/ i226-LM（2.5G 暫定） | MS-03 セットアップの実機確認 |
+| MS-03 の接続 NIC | RTL8127（10G RJ-45）/ X710（SFP+） | 4つとも認識済みで技術的な制約はない。現在は X710 の SFP+ に DAC 直結。USW-Pro-XG-10-PoE の SFP28 は2口で1口が上流に埋まるため、本設置時に配線から決める |
 | 監視 | kube-prometheus-stack | フェーズ1でも簡易構成が必要 |
 | バックアップ | Git リポジトリ + DS923+ のスナップショット | 未着手 |
 | Intel Quick Sync のパススルー | Intel Device Plugin | 初期スコープ外 |
