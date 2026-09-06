@@ -150,6 +150,75 @@ UniFi の mDNS リフレクタを両 VLAN で有効化する必要がある。
 - **DNS の常用系と待機系の役割分担**：現在は S100-WLP 1台の Ubuntu 上で Pi-hole が家庭内 DNS を担っている。トポロジ図の Backup DNS は待機系にあたる。Pi-hole を Kubernetes 上に移すなら、クラスター停止時のフォールバックとして Backup DNS が機能する構成になる。ただしクラスターが安定するまでは、作り直しを繰り返す環境に家庭の DNS を載せるわけにはいかない。Backup DNS を先に常用系として立てるか、Pi-hole を別ハードウェアへ移すかを決める必要がある。
 - **10GbE 配線の到達範囲**：前掲の「トポロジ図で確認が必要な点」を参照。
 
+## コントロールプレーンのセットアップ
+
+HP EliteDesk 800 G6 DM を3台、コントロールプレーンノードとして構築する。
+
+### ハードウェアと Talos での扱い
+
+| 項目 | 内容 | Talos 側 |
+| --- | --- | --- |
+| CPU | Intel Core i5-10500T（Comet Lake、6コア12スレッド、TDP 35W） | `siderolabs/intel-ucode` |
+| RAM | 8GB | — |
+| ストレージ | 256GB SSD | 実機で NVMe か SATA かを確認する |
+| NIC | 内蔵 1GbE（Intel I219-LM 想定） | `e1000e`。カーネルに組み込み済み |
+
+3台とも同一構成である。
+
+RAM 8GB はコントロールプレーン専用なら足りる。
+Talos 本体、etcd、apiserver、controller-manager、scheduler、kubelet、containerd、CNI を合わせて 3GB から 4GB の見込みである。
+`allowSchedulingOnControlPlanes` を `false` に保つ限り余裕がある。
+逆にコントロールプレーンにもワークロードを載せる構成にするなら、ここが最初に詰まる。
+
+NIC が 1GbE でワーカーの 10GbE と差があるが、etcd はスループットではなく fsync レイテンシで不安定になるため、この差は効かない。
+
+### ISO の作成
+
+拡張は `intel-ucode` だけにする。
+
+```yaml
+customization:
+  systemExtensions:
+    officialExtensions:
+      - siderolabs/intel-ucode
+```
+
+この内容で登録すると、次の ID が返る。
+
+```
+2d61dd07b20062062ea671b4d01873506103b67c0f7a4c3fb6cf4ee85585dcb8
+```
+
+```
+ISO         https://factory.talos.dev/image/2d61dd07b20062062ea671b4d01873506103b67c0f7a4c3fb6cf4ee85585dcb8/v1.14.0/metal-amd64.iso
+installer   factory.talos.dev/metal-installer/2d61dd07b20062062ea671b4d01873506103b67c0f7a4c3fb6cf4ee85585dcb8:v1.14.0
+```
+
+定義は `talos/schematics/elitedesk-schematic.yaml` にある。
+
+### 拡張を絞る根拠
+
+MS-03 の5つをそのまま持ち込む必要はない。
+コントロールプレーンはワークロードを載せないため、用途が違う。
+
+| 拡張 | 判断 | 根拠 |
+| --- | --- | --- |
+| `siderolabs/intel-ucode` | 採用 | Comet Lake のマイクロコード。入れない理由がない |
+| `siderolabs/i915` | 見送り | ワークロードを載せないため iGPU 自体が要らない |
+| `siderolabs/intel-npu` | 見送り | NPU を持たない |
+| `siderolabs/iscsi-tools` | 見送り | Longhorn をワーカーに限定するため、コントロールプレーンで iSCSI を使う場面がない |
+| `siderolabs/util-linux-tools` | 見送り | `iscsi-tools` と組で使うものであり、単独では要らない |
+| `iommu=pt` | 見送り | SR-IOV も PCIe パススルーも使わない |
+
+etcd のバックアップは `talosctl etcd snapshot` で行う。
+このコマンドはノードから実行元へスナップショットをストリームするだけで、ノードは外部ストレージをマウントしない。
+バックアップを理由に `iscsi-tools` が要ることはない。
+
+**拡張を後から足すことはできる。**
+`talosctl upgrade` とインストーラーイメージの差し替えで再起動が要るが、コントロールプレーン3台なら1台ずつローリングで上げられる。
+MS-03 で必要になりうる拡張を最初に焼き込んだのは、ワーカーが1台しかなく再起動がワークロード停止に直結したためである。
+3台構成のコントロールプレーンにはその制約がない。
+
 ## MS-03 のセットアップ
 
 MS-03 はワーカーノード `worker-1`（`192.168.20.41`）として稼働している。
@@ -246,8 +315,8 @@ schematic を変更したら ID もこのドキュメントで更新する。
 | `siderolabs/intel-ucode` | 採用 | Panther Lake のマイクロコード |
 | `siderolabs/xe` | 採用 | Xe3 iGPU の DRM ドライバ。`i915` は旧世代向けなので不要 |
 | `siderolabs/intel-npu` | 採用 | Panther Lake 内蔵 NPU のファームウェアとカーネルモジュール。`xe` と同じく、後から足すと `talosctl upgrade` と再起動が要るため最初に含める |
-| `siderolabs/iscsi-tools` | 採用 | democratic-csi の Synology 向けドライバは iSCSI のみ。将来使う可能性に備える |
-| `siderolabs/util-linux-tools` | 採用 | iscsi-tools と組で使う |
+| `siderolabs/iscsi-tools` | 採用 | Longhorn の前提条件。ボリュームのアタッチに `iscsid` と `iscsiadm` を使う |
+| `siderolabs/util-linux-tools` | 採用 | Longhorn の前提条件。ボリュームの trim に `fstrim` を使う |
 | `siderolabs/nfs-utils` | **見送り** | この拡張が提供するのは rpcbind と rpc.statd であり、NFSv3 のファイルロック専用である。NFS クライアント自体は Talos のカーネルに組み込まれており v4.2 まで対応済み（`CONFIG_NFS_V4_2=y`）。NFSv4 を使う限り不要 |
 | `intel_iommu=on` | **削除** | Talos のカーネルは `CONFIG_INTEL_IOMMU_DEFAULT_ON=y` で、指定しても挙動が変わらない |
 | `iommu=pt` | 維持 | `CONFIG_IOMMU_DEFAULT_PASSTHROUGH` は未設定のため、指定に意味がある。X710 の SR-IOV や将来の PCIe パススルーで効く |
@@ -273,7 +342,7 @@ CIFS は Talos のカーネルに組み込まれている（`CONFIG_CIFS=y`）�
 | 写真、動画などの大容量メディア | 使える | 読み取りが主体でファイルロックに依存しない。既存の SMB 運用をそのまま流用できる |
 | データベース、アプリケーションの状態 | 使えない | POSIX のロックが期待どおりに効かず、SQLite や PostgreSQL でデータ破損の危険がある |
 
-データベースとアプリケーションの状態は、もともと OpenEBS Local PV（MS-03 の NVMe）に置く計画である。
+データベースとアプリケーションの状態はワーカーのローカルディスクに置く。
 SMB の制約は残る用途に当たらないため、**DS923+ の SMB 運用は維持できる**。
 
 `plan_old.md` の記述を1点訂正する。
@@ -283,8 +352,19 @@ SMB を使う場合は democratic-csi ではなく `csi-driver-smb` を使う。
 | 層 | ドライバ | バックエンド | 必要な拡張 |
 | --- | --- | --- | --- |
 | メディア（大容量、共有） | `csi-driver-smb` | DS923+ の SMB 共有 | なし（`mount.cifs` はドライバ Pod 内で動く） |
-| DB、アプリ状態（高速） | OpenEBS Local PV | MS-03 の NVMe | なし |
-| ブロック（必要になった場合） | democratic-csi `synology-iscsi` | DS923+ の LUN | `iscsi-tools`、`util-linux-tools` |
+| ブロック（DB、アプリ状態） | Longhorn | ワーカーのローカルディスク | `iscsi-tools`、`util-linux-tools` |
+
+**Longhorn はワーカーにのみ展開する。**
+コントロールプレーンには taint があってワークロードが載らないため、そこにレプリカを置く意味がない。
+DaemonSet が control-plane の taint を許容しないよう設定し、コントロールプレーンの schematic には `iscsi-tools` を含めない。
+
+Longhorn は DS923+ の LUN に iSCSI で繋ぐためのものではない。
+ボリュームをノードにアタッチする際に Longhorn 自身がイニシエータとターゲットの役割を果たすため、ノードに `iscsid` と `iscsiadm` が要る。
+`util-linux-tools` はボリュームの trim に使う `fstrim` のために要る。
+どちらも Longhorn の Talos 向けドキュメントが前提条件として挙げているものである。
+
+Longhorn は namespace に `pod-security.kubernetes.io/enforce=privileged` を要求する。
+Talos は既定で `baseline` を強制するため、この設定を入れないと動かない。
 
 ### 残っている作業
 
@@ -297,6 +377,45 @@ Intel Quick Sync と NPU を使うワークロードは初期スコープ外で�
 それでも `xe` と `intel-npu` を最初の ISO に含めるのは、後から拡張を足すと `talosctl upgrade` と再起動が要るためである。
 カーネルモジュールとファームウェアは拡張が用意するが、コンテナからアクセラレータを使うためのユーザー空間は別途要る。
 Intel Device Plugin が `xe` と NPU のデバイスをどう公開するかは、実際に使う段階で確認する。
+
+## 構築のフェーズ
+
+ハードウェアは3段階で揃える。
+コスト、設置スペース、ネットワーク機器の空きポートによる制約である。
+
+| | コントロールプレーン | ワーカー | etcd メンバー | Longhorn レプリカ |
+| --- | --- | --- | --- | --- |
+| フェーズ1 | EliteDesk x1 | MS-03 x1 | 1 | 1 |
+| フェーズ2 | EliteDesk x3 | MS-03 x1、S100-WLP x1 | 3 | 2 |
+| フェーズ3 | EliteDesk x3 | MS-03 x2 | 3 | 2 |
+
+フェーズ2の S100-WLP は、2台目の MS-03 を調達するまでのつなぎである。
+フェーズ3で MS-03 に置き換わり、S100-WLP はクラスターから外れる。
+
+**ソフトウェアの構成はフェーズをまたいで変えない。**
+CNI も CSI もフェーズ1から最終形のものを入れる。
+後から差し替えると PV の作り直しやデータ移送が発生するためであり、フェーズ間で変わるのは台数と、それに伴うレプリカ数だけにする。
+
+### フェーズごとに変わること
+
+**etcd のメンバー数**はフェーズ1で 1、フェーズ2以降で 3 になる。
+フェーズ1でコントロールプレーンが落ちると API が使えなくなるが、ワーカー上で動いている Pod は動き続ける。
+
+**Longhorn のレプリカ数**は 1、2、2 と推移する。
+フェーズ2で S100-WLP を1台に留めるのは、この推移を単調にするためである。
+2台入れてレプリカを 3 まで上げると、フェーズ3で 2 に落とす際にレプリカを削る操作が要る。
+
+フェーズ2からフェーズ3への移行では、先に MS-03 の2台目を投入してワーカーを一時的に3台にする。
+そのうえで S100-WLP のレプリカを退避させてから外せば、レプリカ数 2 を保ったまま入れ替えられる。
+
+### フェーズ1の可用性について
+
+フェーズ1はワーカーが MS-03 1台だけであり、Longhorn のレプリカも1つである。
+このノードが落ちれば、その上のワークロードとボリュームは復旧まで到達できない。
+
+家庭の DNS を担う Pi-hole をフェーズ1でクラスターに載せるため、**クラスター外に副の DNS を用意することが前提条件になる**。
+UCG-Fiber 自身の DNS を副として配るか、別途 Backup DNS を立てる。
+これはクラスターの構築対象外として扱う。
 
 ## 現在のクラスター
 
@@ -320,15 +439,46 @@ S100-WLP は3台のうち2台の内蔵 I226-V に物理層障害があり、そ�
 
 - **OS**：Talos Linux。設定管理は talhelper（`talconfig.yaml`）
 - **コントロールプレーンの機種**：HP EliteDesk 800 G6 を3台。S100-WLP からの置き換えを数日中に行う
-- **コントロールプレーンのイメージ**：標準 Talos を Image Factory の schematic で使う。EliteDesk 800 G6 は SATA と NVMe であり、UFS の制約を受けない
-- **GitOps**：Flux v2。main ブランチへのマージをトリガーに反映する
+- **コントロールプレーンのイメージ**：標準 Talos を Image Factory の schematic で使う。拡張は `intel-ucode` のみ
+- **CNI**：Cilium。kube-proxy を完全に置換し、eBPF モードで動かす。フェーズ1から入れる
+- **Ingress**：Cilium の Gateway API 実装を使う。Ingress API の後継が Gateway API であり、Cilium が Core conformance を全通過しているため、専用の Ingress コントローラーを足さない。前提として `kubeProxyReplacement=true` と `l7Proxy=true` が要る
+- **外部公開**：Cloudflare Tunnel。ルーターのポートを開けない
+- **GitOps**：Flux v2。Flux Operator と FluxInstance で管理する。main ブランチへのマージをトリガーに反映する
+- **CI/CD**：Flux の Webhook Receiver を使う。GitHub Actions はクラスターに触らない。push イベントを Cloudflare Tunnel 経由で受け、Flux が即座に Git を pull する。CI 側の仕事はマニフェストの検証と Renovate による更新 PR に限る
+- **内部の名前解決**：external-dns の Pi-hole プロバイダーで、クラスターのホスト名を Pi-hole の Custom DNS に書き込む。DNS サーバーを別途立てない
 - **ツール管理**：mise。ローカル環境の再現性を確保する
 - **シークレット管理**：SOPS + age。暗号化済み Secret を Git にコミットする
 - **リポジトリ構成**：`onedr0p/cluster-template` に準拠する
 - **証明書**：cert-manager + Let's Encrypt。DNS-01 チャレンジに Cloudflare を使う
 - **ワーカーノード**：MS-03。標準 Talos を Image Factory の schematic でカスタムして使う。2台目の MS-03 を調達するまでのつなぎに S100-WLP をワーカーに回す場合も、標準 Talos で動くことを確認済みである
 - **Talos のバージョン**：全ノードを v1.14.0 に揃える。Kubernetes は v1.37.0
-- **ストレージ**：大容量メディアは `csi-driver-smb` で DS923+ の SMB 共有へ。データベースとアプリケーションの状態は OpenEBS Local PV で MS-03 の NVMe へ
+- **ストレージ**：大容量メディアは `csi-driver-smb` で DS923+ の SMB 共有へ。データベースとアプリケーションの状態は Longhorn でワーカーのローカルディスクへ。Longhorn はワーカーにのみ展開し、フェーズ1から入れる
+- **LoadBalancer**：Cilium BGP。UCG-Fiber は UniFi OS 4.1.13 以降で BGP に対応しており、FRR 形式の設定ファイルをアップロードして構成する（Settings → Routing → BGP）
+
+### フェーズ1で入れるコンポーネント
+
+| namespace | コンポーネント | 役割 |
+| --- | --- | --- |
+| kube-system | cilium | CNI、kube-proxy 置換、L7 proxy、BGP、Gateway API |
+| kube-system | coredns | クラスター内 DNS |
+| kube-system | metrics-server | `kubectl top`、HPA |
+| cert-manager | cert-manager | Let's Encrypt、DNS-01 チャレンジに Cloudflare |
+| flux-system | flux-operator、flux-instance | GitOps と Webhook Receiver |
+| network | cloudflare-tunnel | 外部公開 |
+| network | external-dns（Cloudflare） | 公開 DNS レコード |
+| network | external-dns（Pi-hole） | 内部 DNS レコード |
+| longhorn-system | longhorn | ブロックストレージ |
+| （未定） | pi-hole | 宅内 DNS |
+
+**採用しないもの**：`kube-vip`、`envoy-gateway`、`traefik`、`k8s-gateway`、`spegel`、`reloader`
+
+`onedr0p/cluster-template` はこれらを含むが、いずれも既に入るコンポーネントで代替できるか、この規模では要らない。
+判断の根拠は [knowledge/cluster-template-evaluation.md](knowledge/cluster-template-evaluation.md) に記す。
+
+### TODO
+
+- [ ] **Pi-hole の冗長化**：クラスター内の Pi-hole を primary、Raspberry Pi 3 を replica として `nebula-sync` で設定を同期する。Pi-hole v6 では Gravity Sync も Orbital Sync も動かず、`nebula-sync` が現行の解になる。両方が v6 である必要がある。external-dns が書く Custom DNS のレコードを同期対象に含めるかは、意図を持って決める
+- [ ] **10GbE で DS923+ との実効スループットを測る**：DS923+ を VLAN 20 に載せてから
 
 ### バージョンとイメージの整合
 
@@ -337,11 +487,13 @@ S100-WLP は3台のうち2台の内蔵 I226-V に物理層障害があり、そ�
 
 全ノードのイメージを Image Factory に揃える。
 
-| ノード | インストーラーイメージ |
-| --- | --- |
-| EliteDesk 800 G6 | 未定。拡張の要否を決めてから schematic を作る |
-| MS-03 | `factory.talos.dev/metal-installer/b7f363548fe975dbb10e85983906f0c3f44ab3804b6246b677508ca1bb20d1f4:v1.14.0` |
-| S100-WLP | `factory.talos.dev/metal-installer/376567988ad370138ad8b2698212367b8edcb69b5fd68c80be1f2ec7d603b4ba:v1.14.0`（素の schematic） |
+| ノード | インストーラーイメージ | 拡張 |
+| --- | --- | --- |
+| EliteDesk 800 G6 | `factory.talos.dev/metal-installer/2d61dd07b20062062ea671b4d01873506103b67c0f7a4c3fb6cf4ee85585dcb8:v1.14.0` | `intel-ucode` |
+| MS-03 | `factory.talos.dev/metal-installer/b7f363548fe975dbb10e85983906f0c3f44ab3804b6246b677508ca1bb20d1f4:v1.14.0` | `intel-ucode`、`xe`、`intel-npu`、`iscsi-tools`、`util-linux-tools` |
+| S100-WLP | `factory.talos.dev/metal-installer/376567988ad370138ad8b2698212367b8edcb69b5fd68c80be1f2ec7d603b4ba:v1.14.0` | なし（素の schematic） |
+
+S100-WLP をワーカーに回す場合は、Longhorn の前提条件を満たすために `iscsi-tools` と `util-linux-tools` を含む schematic に差し替える必要がある。
 
 イメージが1系統に揃うため、Renovate で追跡先が分かれてバージョンがずれる問題は起きない。
 
@@ -351,12 +503,10 @@ S100-WLP は3台のうち2台の内蔵 I226-V に物理層障害があり、そ�
 
 | 項目 | 選択肢 | 状況 |
 | --- | --- | --- |
-| EliteDesk 800 G6 の schematic | 拡張の要否を決めて登録する | 未着手。これが決まらないとインストーラーイメージが確定しない |
-| S100-WLP 3台の行き先 | ワーカーとして使う / 退役させる | 2台目の MS-03 の調達時期による。標準 Talos で動くことは確認済み |
-| Pi-hole の移設先 | Kubernetes 上 / 別ハードウェア | 未着手。S100-WLP 1台を占有している |
-| CNI | Cilium（kube-proxy 完全置換、eBPF モード） | ノード構成の確定後。現在は既定の Flannel |
-| LoadBalancer | Cilium L2 Announcement（Pool: 192.168.20.200-250） | VLAN 20 確定済みのため着手可能 |
-| Ingress | Traefik | CNI の稼働後 |
+| フェーズ2で使う S100-WLP の個体 | morty / jerry / rick | Pi-hole がフェーズ1でクラスターに移るため、3台とも候補になる。容量とストレージ特性で選ぶ |
+| S100-WLP 用のワーカー schematic | 未作成 | Longhorn の前提条件を満たすため `iscsi-tools` と `util-linux-tools` を含める |
+| Ingress | Traefik / Cilium Gateway API | Cilium の稼働後 |
+| BGP の ASN 設計 | クラスター側と UCG-Fiber 側の AS 番号 | プライベート ASN から選ぶ |
 | MS-03 の接続 NIC | RTL8127（10G RJ-45）/ X710（SFP+） | 4つとも認識済み。本設置時に配線とあわせて決める |
 | 監視 | kube-prometheus-stack | 未着手 |
 | バックアップ | Git リポジトリ + DS923+ のスナップショット | 未着手 |

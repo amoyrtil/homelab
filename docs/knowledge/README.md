@@ -12,6 +12,7 @@ homelab の構築過程で行った検証と、そこで得た知見の置き場
 | --- | --- | --- |
 | [s100-etcd-evaluation.md](s100-etcd-evaluation.md) | MINISFORUM S100-WLP の UFS ストレージが etcd の fsync 要件に耐えるかの判定。fio による単体測定から、コントロールプレーン2台での持続書き込み負荷試験まで | 2026年8月 |
 | [talos-v1.14-ufs.md](talos-v1.14-ufs.md) | Talos v1.14 で上流カーネルが UFS に対応したことを受け、`talos-ufs` のカスタムビルドが不要になったかを検証。あわせてクラスターを v1.14 へ移行し、MS-03 をワーカーとして投入した記録 | 2026年9月6日 |
+| [cluster-template-evaluation.md](cluster-template-evaluation.md) | `onedr0p/cluster-template` をリポジトリ構成の出発点にするかの評価。派生して Ingress、CI/CD、内部 DNS の方式も決めた | 2026年9月6日 |
 
 ## 横断的な知見
 
@@ -26,3 +27,4 @@ homelab の構築過程で行った検証と、そこで得た知見の置き場
 - **S100-WLP の UFS は etcd に耐える。** 2メンバー構成の 30分持続負荷でリーダー選出も提案失敗も発生しなかった。ただし同じ機種でも個体によって定常時のレイテンシに差が出る。
 - **`talos-ufs` は役目を終えた。** Talos v1.14 の標準イメージで S100-WLP にインストールでき、起動する。カーネルの UFS 対応とパーティションサイズの両方が上流で解決している。
 - **MS-03 の NIC は4つとも Talos が認識する。** RTL8127 も `r8169` が掴む。一方 NPU は `intel_vpu` の probe が失敗し、デバイスノードが作られない。
+- **`onedr0p/cluster-template` はジェネレーターとしては採用しない。** ディレクトリ規約、Flux Operator 方式、helmfile ブートストラップ、mise のバージョン固定だけを借りる。

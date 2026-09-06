@@ -1,0 +1,16 @@
+# Talos Image Factory schematic for control plane (HP EliteDesk 800 G6 DM)
+#
+# schematic ID: 2d61dd07b20062062ea671b4d01873506103b67c0f7a4c3fb6cf4ee85585dcb8
+#
+# ID は内容から決まり、Talos のバージョンには依存しない。
+# この内容を変更したら ID を再取得し、docs/plan.md も更新する。
+#
+#   curl -X POST --data-binary @talos/schematics/elitedesk-schematic.yaml \
+#     https://factory.talos.dev/schematics
+#
+# 採用理由は docs/plan.md「コントロールプレーンのセットアップ」を参照。
+---
+customization:
+  systemExtensions:
+    officialExtensions:
+      - siderolabs/intel-ucode
