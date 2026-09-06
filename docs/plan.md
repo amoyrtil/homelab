@@ -14,16 +14,52 @@ homelab に Kubernetes クラスターと GitOps ベースの CI/CD を整備す
 
 ## 現在地
 
-**リハーサル（手順2）の R1 に着手するところ。**
-EliteDesk 800 G6 の到着待ちのあいだに、いま動いている S100-WLP + MS-03 のクラスターで構成を検証する。
+**リハーサル（手順2）の R3 まで完了。次は R4。**
+最終更新は 2026年9月6日である。
+
+### いまのクラスターの状態
+
+**全ノードの電源が落ちている。** ディスクの内容は消していないため、電源を入れれば下記の状態から再開できる。
+
+| ノード | 機器 | アドレス | 状態 |
+| --- | --- | --- | --- |
+| cp-1 | S100-WLP（morty） | 192.168.20.31 | 停止中。Talos v1.14.0 と Cilium が入っている |
+| worker-1 | MS-03 | 192.168.20.41 | 停止中 |
+
+入っているものは Talos v1.14.0、Kubernetes v1.37.0、Cilium v1.20.1（kube-proxy 置換、L7 proxy、Gateway API、L2 Announcement）である。
+`GatewayClass`、`CiliumLoadBalancerIPPool`（192.168.20.200-250）、`CiliumL2AnnouncementPolicy` は残してある。
+検証に使った nginx と Gateway は削除済みで、`default` namespace は空である。
+
+これはリハーサル環境であり、EliteDesk 到着後に本番として組み直す。
+クラスター名もノード名も暫定のままでよい。
+
+### 次にやること
+
+**R4: Cilium BGP を UCG-Fiber と対向させる。**
+
+着手前に2つ決める必要がある。
+
+- **BGP の ASN** — クラスター側とルーター側で別の番号を使い、eBGP にする。プライベート ASN（64512-65534）から選ぶ
+- **UCG-Fiber の FRR 設定** — UniFi の Settings → Routing → BGP に設定ファイルをアップロードする方式である。UniFi OS 4.1.13 以降で対応
+
+R4 が通れば L2 Announcement は不要になる。
+`bootstrap/cilium-networks.yaml` の `CiliumL2AnnouncementPolicy` を落とし、`CiliumBGPClusterConfig` に置き換える。
 
 ### 作業の進め方
 
 - [x] **1. テンプレートの評価** — `onedr0p/cluster-template` を採用するか判断する。記録は [knowledge/cluster-template-evaluation.md](knowledge/cluster-template-evaluation.md)
-- [ ] **2. リハーサル** — いま動いているクラスターで、フェーズ1の構成を通す。詳細は「リハーサル」節
-- [ ] **3. 知見の集約** — 2 の結果を `knowledge/` に記録する
+- [ ] **2. リハーサル** — いま動いているクラスターで、フェーズ1の構成を通す。R1 から R3 まで完了。詳細は「リハーサル」節
+- [ ] **3. 知見の集約** — 2 の結果を `knowledge/` に記録する。R1 から R3 の分は [knowledge/talos-operations.md](knowledge/talos-operations.md) に反映済み
 - [ ] **4. 規約の整備** — 命名規則など homelab 全体のルールを決め、プロジェクトルートの `CLAUDE.md` を更新する
 - [ ] **5. フェーズ1の構築** — EliteDesk 到着後、クラスターを本番として組み直す
+
+### 作業環境
+
+ツールは `mise` で固定している。リポジトリのルートで `mise install` を実行すれば揃う。
+`KUBECONFIG` と `TALOSCONFIG` も `.mise/config.toml` で設定しているため、`cd` するだけで接続先がそろう。
+
+`talos/clusterconfig/` は gitignore 対象である。
+消えている場合は `cd talos && talhelper genconfig` で再生成する。
 
 ### 技術判断の基準
 
@@ -460,8 +496,12 @@ UCG-Fiber 自身の DNS を副として配るか、別途 Backup DNS を立て�
 
 ## リハーサル
 
-EliteDesk 800 G6 の到着を待つあいだ、いま動いている S100-WLP + MS-03 のクラスターでフェーズ1の構成を通す。
+EliteDesk 800 G6 の到着を待つあいだ、S100-WLP + MS-03 のクラスターでフェーズ1の構成を通す。
 目的は手順とハマりどころを洗い出すことであり、成果物は `knowledge/` に残す。
+
+R1 から R3 までで、**この構成の落とし穴は2つとも Cilium 側にあった**ことが分かっている。
+`bpf.autoMount.enabled` を無効にすると `cilium-envoy` から BPF マップが見えなくなる件と、Gateway API の CRD が experimental チャネルを要求する件である。
+どちらも [knowledge/talos-operations.md](knowledge/talos-operations.md) に記録した。
 
 クラスター名とノード名は現状のまま（`homelab`、`cp-1`、`worker-1`）で進める。
 命名規約は手順4で整理するため、ここでは触らない。
