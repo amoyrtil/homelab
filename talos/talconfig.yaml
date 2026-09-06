@@ -1,8 +1,8 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/budimanjojo/talhelper/master/pkg/config/schemas/talconfig.json
 ---
 clusterName: homelab
-talosVersion: v1.13.9
-kubernetesVersion: v1.36.2
+talosVersion: v1.14.0
+kubernetesVersion: v1.37.0
 endpoint: https://192.168.20.100:6443
 
 allowSchedulingOnControlPlanes: false
@@ -23,7 +23,10 @@ nodes:
     ipAddress: 192.168.20.31
     controlPlane: true
     installDisk: /dev/sda # UFS デバイス
-    talosImageURL: ghcr.io/amoyrtil/talos-ufs-installer
+    # Talos v1.14 で標準カーネルが UFS に対応したため talos-ufs は不要になった。
+    # 拡張を含まない素の schematic を使う。検証の記録は
+    # docs/plan.md「Talos v1.14 への移行と talos-ufs の存廃」を参照。
+    talosImageURL: factory.talos.dev/metal-installer/376567988ad370138ad8b2698212367b8edcb69b5fd68c80be1f2ec7d603b4ba
     nameservers:
       - 192.168.20.1
     certSANs:
@@ -41,36 +44,9 @@ nodes:
         vip:
           ip: 192.168.20.100
 
-  # cp-2 = jerry。morty と同じく内蔵 I226-V に物理層障害があるため USB ドングルを使う。
-  # UFS は 128GB の KLUDG4U1EA-B0C1 で、morty の 256GB KLUEG8U1EA-B0C1 とは別型番。
-  - hostname: cp-2
-    ipAddress: 192.168.20.32
-    controlPlane: true
-    installDisk: /dev/sda # UFS デバイス
-    talosImageURL: ghcr.io/amoyrtil/talos-ufs-installer
-    nameservers:
-      - 192.168.20.1
-    certSANs:
-      - 192.168.20.32
-      - 192.168.20.100
-    networkInterfaces:
-      - deviceSelector:
-          driver: r8152
-        addresses:
-          - 192.168.20.32/24
-        routes:
-          - network: 0.0.0.0/0
-            gateway: 192.168.20.1
-        vip:
-          ip: 192.168.20.100
-    patches:
-      # 旧 Ubuntu の GPT と EFI パーティションが残っているためゼロクリアする。
-      # インストール完了後にこのパッチは外す。残したままだと将来の
-      # talosctl upgrade で installer が再びディスクを消しに行く。
-      - |-
-        machine:
-          install:
-            wipe: true
+  # cp-2 = jerry は 2026年9月6日に talos-ufs の要否検証に使い、クラスターから外した。
+  # 経緯は docs/plan.md「Talos v1.14 への移行と talos-ufs の存廃」を参照。
+  # コントロールプレーンは EliteDesk 800 G6 に置き換えるため、ここには戻さない。
 
 controlPlane:
   patches:
