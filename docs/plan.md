@@ -471,7 +471,7 @@ EliteDesk 800 G6 の到着を待つあいだ、いま動いている S100-WLP + 
 
 ### 検証項目
 
-- [ ] **R1: `cni: none` と kube-proxy 無効でクラスターを作る**
+- [x] **R1: `cni: none` と kube-proxy 無効でクラスターを作る**（2026年9月6日 完了）
 - [ ] **R2: Cilium を kube-proxy 置換・L7 proxy 有効で入れる**
 - [ ] **R3: Cilium の Gateway API と LB IPAM**
 - [ ] **R4: Cilium BGP を UCG-Fiber と対向させる**（UCG-Fiber 側の FRR 設定が要る）
@@ -501,6 +501,21 @@ cluster:
 
 **これはクラスター構築時に効く設定である。**
 後から変えるとノードの作り直しになるため、リハーサルで手順を固めておく価値がある。
+
+**R1 の結果（2026年9月6日）**
+
+| 確認項目 | 結果 |
+| --- | --- |
+| 両ノードの状態 | `NotReady`。理由は `cni plugin not initialized` |
+| DaemonSet | `No resources found`。kube-proxy が作られていない |
+| CoreDNS | `Pending`。Pod ネットワークがないため |
+| コントロールプレーンの静的 Pod | `Running`。ホストネットワークで動くため CNI 不要 |
+| etcd | 3.7.1、リーダー、healthy |
+| VIP | cp-1 が保持し、`kubectl` も VIP 経由で応答 |
+
+途中で v1alpha1 の `cluster.proxy.disabled` を書いて生成に失敗した。
+正解は `KubeProxyConfig` ドキュメントの `enabled: false` である。
+詳細は [knowledge/talos-operations.md](knowledge/talos-operations.md) に記した。
 
 ### R2 で要る Cilium の設定
 

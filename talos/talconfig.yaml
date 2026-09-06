@@ -7,6 +7,11 @@ endpoint: https://192.168.20.100:6443
 
 allowSchedulingOnControlPlanes: false
 
+# Cilium を kube-proxy 置換で入れるため、Talos には CNI も kube-proxy も作らせない。
+# どちらもクラスター構築時にしか効かないため、後から変えるとノードの作り直しになる。
+cniConfig:
+  name: none
+
 # cp-2 / cp-3 を後から足したときに証明書を作り直さずに済むよう、
 # 計画上のアドレスを最初からすべて SAN に含めておく。
 additionalApiServerCertSans:
@@ -73,10 +78,10 @@ nodes:
 
 controlPlane:
   patches:
-    # フェーズ1の検証専用。認証なしの etcd メトリクスエンドポイントを開ける。
-    # 本構築には持ち込まない。
+    # kube-proxy は Cilium が置き換えるため作らせない。
+    # v1.14 では v1alpha1 の cluster.proxy が KubeProxyConfig ドキュメントと
+    # 衝突するため、ドキュメント側の enabled を落とす。
     - |-
-      cluster:
-        etcd:
-          extraArgs:
-            listen-metrics-urls: http://0.0.0.0:2381
+      apiVersion: v1alpha1
+      kind: KubeProxyConfig
+      enabled: false

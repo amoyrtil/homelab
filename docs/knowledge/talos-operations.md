@@ -32,6 +32,42 @@ error applying configuration: rpc error: code = InvalidArgument desc = 3 errors 
 `cluster.allowSchedulingOnControlPlanes` に対応するのは `KubeNodeConfig` の `taints` である。
 コントロールプレーンに Pod を載せたいなら、v1alpha1 のフラグではなく `KubeNodeConfig` から `node-role.kubernetes.io/control-plane: NoSchedule` を外す。
 
+## kube-proxy と CNI を無効にする
+
+Cilium を kube-proxy 置換で入れる場合、Talos に kube-proxy も CNI も作らせない。
+v1.14 ではどちらもドキュメント側で表現する。
+
+**kube-proxy** は `KubeProxyConfig` の `enabled` を落とす。
+
+```yaml
+apiVersion: v1alpha1
+kind: KubeProxyConfig
+enabled: false
+```
+
+v1alpha1 の `cluster.proxy.disabled` を書くと、次のエラーで生成が止まる。
+
+```
+cluster proxy config in v1alpha1 config (.machine.cluster.proxy) can't be used with
+KubeProxyConfig document, please remove it to avoid conflicts
+```
+
+`enabled` は既定値のとき出力されないフィールドであり、`talosctl gen config` の出力を見ても存在に気付けない。
+定義は `pkg/machinery/config/types/k8s/proxy.go` の `ProxyEnabled` にある。
+
+**CNI** は talhelper の `cniConfig.name: none` で無効にする。
+
+```yaml
+cniConfig:
+  name: none
+```
+
+これを指定すると `KubeFlannelCNIConfig` ドキュメントが生成されなくなる。
+v1.14 では CNI の有無がドキュメントの有無で表現されるため、`cni: none` のような明示的な記述は出力に現れない。
+
+**どちらもクラスター構築時にしか効かない。**
+後から変えるとノードの作り直しになる。
+
 talhelper は 3.1.17 の時点でこの形式に対応している。
 リリース日は Talos v1.14.0 より前だが、生成される machine config は新しいドキュメント形式になっており、重複も起こさない。
 
