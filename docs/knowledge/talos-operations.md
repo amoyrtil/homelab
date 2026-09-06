@@ -71,6 +71,63 @@ v1.14 では CNI の有無がドキュメントの有無で表現されるため
 talhelper は 3.1.17 の時点でこの形式に対応している。
 リリース日は Talos v1.14.0 より前だが、生成される machine config は新しいドキュメント形式になっており、重複も起こさない。
 
+## Cilium を Talos に入れるときの落とし穴
+
+公式ガイド（Deploy Cilium CNI）は Talos 固有の前提を4つ挙げている。
+`ipam.mode: kubernetes`、cgroupv2 と bpffs を Cilium にマウントさせないこと、`SYS_MODULE` を落とすこと、KubePrism を使うことである。
+
+**このうち bpffs の扱いは、書かれているとおりに `bpf.autoMount.enabled: false` としてはいけない。**
+
+このフラグは「Cilium が bpffs をマウントしない」だけでなく、**hostPath ボリュームの定義ごと落とす**。
+`cilium-agent` は特権で直接触れるため症状が出ないが、`cilium-envoy` は Pod 内から BPF マップが見えなくなる。
+
+```
+cilium.bpf_metadata: Cannot open IPv4 conntrack map at /sys/fs/bpf/tc/globals/cilium_ct4_global
+cilium.ipcache: Cannot open ipcache at /sys/fs/bpf/tc/globals/cilium_ipcache_v2
+```
+
+`bpf_metadata` フィルタは送信元の識別に ipcache を使うため、これが開けないと **Gateway が HTTP 500 を返す**。
+CNI としての疎通（ClusterIP、CoreDNS）は正常なので、Gateway API を入れるまで気付けない。
+
+切り分けは Envoy Pod の中を見るのが速い。
+
+```bash
+kubectl -n kube-system exec <cilium-envoy-pod> -- ls /sys/fs/bpf/tc/globals/
+kubectl -n kube-system exec ds/cilium -c cilium-agent -- ls /sys/fs/bpf/tc/globals/
+```
+
+エージェント側にマップがあるのに Envoy 側から見えなければ、この問題である。
+`cgroup.autoMount.enabled: false` のほうは指定して差し支えない。
+
+**`cilium-agent` を再起動したら `cilium-envoy` も再起動する。**
+外部 Envoy を使う構成では両者が別の DaemonSet であり、`rollout restart daemonset/cilium` はエージェントしか入れ替えない。
+
+## Cilium の Gateway API は CRD を7種要求する
+
+`gatewayAPI.enabled: true` にすると、operator が必須 CRD の存在を検査する。
+
+```
+Required GatewayAPI resources are not found:
+  customresourcedefinitions "tlsroutes.gateway.networking.k8s.io" not found
+  customresourcedefinitions "backendtlspolicies.gateway.networking.k8s.io" not found
+```
+
+必須は `gatewayclasses`、`gateways`、`httproutes`、`grpcroutes`、`tlsroutes`、`referencegrants`、`backendtlspolicies` の7種である。
+**`tlsroutes` は standard チャネルに存在しないため、experimental チャネルで入れる必要がある。**
+使う予定がなくても CRD の存在自体を要求される。
+
+CRD が足りないあいだ、`GatewayClass` は `Accepted: Unknown`（`Waiting for controller`）のまま止まる。
+原因は operator のログにしか出ない。
+
+`httproutes` の CRD は annotation が大きく、`kubectl apply` が上限に当たる。
+
+```
+The CustomResourceDefinition "httproutes.gateway.networking.k8s.io" is invalid:
+metadata.annotations: Too long: may not be more than 262144 bytes
+```
+
+`kubectl apply --server-side` を使う。
+
 ## インストーラーイメージは Image Factory から取る
 
 v1.14 で `ghcr.io/siderolabs/installer` の公開が止まった。

@@ -1,4 +1,4 @@
-# R2 検証用の Cilium 値。動作確認後に helmfile へ落とす。
+# リハーサル用の Cilium 値。動作確認後に helmfile へ落とす。
 
 # Talos の前提: IPAM は kubernetes モードでなければならない
 ipam:
@@ -16,14 +16,15 @@ l7Proxy: true
 k8sServiceHost: 127.0.0.1
 k8sServicePort: 7445
 
-# Talos は cgroupv2 と bpffs を既に提供している。Cilium にマウントさせない。
+# Talos は cgroupv2 を既に提供しているため、Cilium にマウントさせない。
 cgroup:
   autoMount:
     enabled: false
   hostRoot: /sys/fs/cgroup
-bpf:
-  autoMount:
-    enabled: false
+
+# bpf.autoMount は無効にしない。無効にすると hostPath ボリュームの定義ごと
+# 落ちるため、cilium-envoy から BPF マップが見えなくなり Gateway が 500 を返す。
+# エージェントは特権で直接触れるので症状が出ず、Envoy 側だけが壊れる。
 
 # Talos は Kubernetes のワークロードにカーネルモジュールのロードを許さない
 securityContext:
@@ -47,8 +48,20 @@ securityContext:
       - SYS_ADMIN
       - SYS_RESOURCE
 
-# Gateway API と LB IPAM は R3 で足す。ここでは CNI と kube-proxy 置換だけを見る。
-
 # コントロールプレーンが1台なので operator も1つでよい
 operator:
   replicas: 1
+
+# Gateway API。CRD は別途 kubectl apply で入れる（standard channel, v1.6.1）
+gatewayAPI:
+  enabled: true
+
+# LoadBalancer の IP を L2 で広告する。R4 で BGP に切り替えるまでの確認用。
+l2announcements:
+  enabled: true
+
+# L2 Announcement は Kubernetes API へのアクセスが増えるため、既定の
+# client-rate-limit では leader election が失敗しやすい。
+k8sClientRateLimit:
+  qps: 50
+  burst: 100

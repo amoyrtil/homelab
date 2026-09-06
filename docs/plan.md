@@ -473,7 +473,7 @@ EliteDesk 800 G6 の到着を待つあいだ、いま動いている S100-WLP + 
 
 - [x] **R1: `cni: none` と kube-proxy 無効でクラスターを作る**（2026年9月6日 完了）
 - [x] **R2: Cilium を kube-proxy 置換・L7 proxy 有効で入れる**（2026年9月6日 完了）
-- [ ] **R3: Cilium の Gateway API と LB IPAM**
+- [x] **R3: Cilium の Gateway API と LB IPAM**（2026年9月6日 完了）
 - [ ] **R4: Cilium BGP を UCG-Fiber と対向させる**（UCG-Fiber 側の FRR 設定が要る）
 - [ ] **R5: Longhorn をワーカーにのみ展開する**（レプリカ1）
 - [ ] **R6: Flux Operator と SOPS**
@@ -554,6 +554,30 @@ KubePrism は Talos が各ノードの `127.0.0.1:7445` で提供する API プ�
 | kube-proxy | 不在のまま |
 
 Service の負荷分散を Cilium の eBPF が肩代わりしていることを、kube-proxy 不在の状態で実証した。
+
+### R3 で足すもの
+
+Gateway API の CRD は **experimental チャネル**の v1.6.1 を使う。
+Cilium は `tlsroutes` と `backendtlspolicies` を含む7種を必須として要求し、`tlsroutes` は standard チャネルに存在しない。
+
+`CiliumLoadBalancerIPPool` と `CiliumL2AnnouncementPolicy` は `bootstrap/cilium-networks.yaml` に置く。
+プールは `192.168.20.200-250` で、これは「VLAN 20 のアドレス割り当て」で確保した帯である。
+L2 Announcement は R4 で BGP に移すまでの確認用であり、ワーカーのみが広告するよう `nodeSelector` を付けている。
+
+**R3 の結果（2026年9月6日）**
+
+| 確認項目 | 結果 |
+| --- | --- |
+| `GatewayClass` | `ACCEPTED: True`（`io.cilium/gateway-controller`） |
+| `Gateway` | `PROGRAMMED: True`、アドレス `192.168.20.200` |
+| LB IPAM | プールから払い出し。51 IP 利用可能 |
+| L2 Announcement | VLAN 20 の外にいる作業端末から到達 |
+| nginx への疎通 | 連続5回すべて `HTTP 200` |
+
+**2箇所でつまずいた。**
+CRD をどのチャネルで入れるかと、`bpf.autoMount.enabled` を無効にすると `cilium-envoy` から BPF マップが見えなくなる件である。
+後者は CNI としての疎通が正常なまま Gateway だけが 500 を返すため、Gateway API を入れるまで気付けない。
+詳細は [knowledge/talos-operations.md](knowledge/talos-operations.md) に記した。
 
 ## 現在のクラスター
 
