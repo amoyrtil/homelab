@@ -200,5 +200,4 @@ L2 Announcement は R4 で BGP に移すまでの確認用であり、ワーカ�
 
 - [design.md](design.md)：確定した構成 — 機材、ネットワーク、ノードのイメージ、ソフトウェアスタック、フェーズ定義
 - [knowledge/](knowledge/)：検証の記録と Talos の運用知見
-- `plan_old.md`：前バージョンの計画。本構築フェーズの実装タスク案が残っている
 - `physical-network-topology-plan.svg`：物理トポロジ図（将来導入する機器を含む）

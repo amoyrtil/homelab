@@ -145,7 +145,7 @@ SMB の制約は残る用途に当たらないため、**DS923+ の SMB 運用�
 ### democratic-csi ではなく csi-driver-smb を使う
 
 democratic-csi が Synology 向けに持つドライバは `synology-iscsi`（experimental）だけで、NFS 版は存在しない。
-`plan_old.md` にある「Synology API を通じて NFS 共有を動的プロビジョニング」という記述はこの点で誤りである。
+初期の検討で「Synology API を通じて NFS 共有を動的プロビジョニングする」と書いていたが、これは成り立たない。
 
 ### Longhorn が iscsi-tools と util-linux-tools を要る
 
