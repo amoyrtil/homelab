@@ -1,0 +1,67 @@
+# リハーサル用の Cilium 値。動作確認後に helmfile へ落とす。
+
+# Talos の前提: IPAM は kubernetes モードでなければならない
+ipam:
+  mode: kubernetes
+
+# kube-proxy を完全に置換する
+kubeProxyReplacement: true
+
+# Gateway API の前提条件
+l7Proxy: true
+
+# kube-proxy がいないため、API サーバーへの到達経路を明示する。
+# KubePrism は Talos が各ノードの localhost:7445 で提供する API プロキシで、
+# コントロールプレーンが増えても追従するため実 IP の直書きより適する。
+k8sServiceHost: 127.0.0.1
+k8sServicePort: 7445
+
+# Talos は cgroupv2 を既に提供しているため、Cilium にマウントさせない。
+cgroup:
+  autoMount:
+    enabled: false
+  hostRoot: /sys/fs/cgroup
+
+# bpf.autoMount は無効にしない。無効にすると hostPath ボリュームの定義ごと
+# 落ちるため、cilium-envoy から BPF マップが見えなくなり Gateway が 500 を返す。
+# エージェントは特権で直接触れるので症状が出ず、Envoy 側だけが壊れる。
+
+# Talos は Kubernetes のワークロードにカーネルモジュールのロードを許さない
+securityContext:
+  capabilities:
+    ciliumAgent:
+      - CHOWN
+      - KILL
+      - NET_ADMIN
+      - NET_RAW
+      - IPC_LOCK
+      - SYS_ADMIN
+      - SYS_RESOURCE
+      - PERFMON
+      - BPF
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    cleanCiliumState:
+      - NET_ADMIN
+      - SYS_ADMIN
+      - SYS_RESOURCE
+
+# コントロールプレーンが1台なので operator も1つでよい
+operator:
+  replicas: 1
+
+# Gateway API。CRD は別途 kubectl apply で入れる（standard channel, v1.6.1）
+gatewayAPI:
+  enabled: true
+
+# LoadBalancer の IP を L2 で広告する。R4 で BGP に切り替えるまでの確認用。
+l2announcements:
+  enabled: true
+
+# L2 Announcement は Kubernetes API へのアクセスが増えるため、既定の
+# client-rate-limit では leader election が失敗しやすい。
+k8sClientRateLimit:
+  qps: 50
+  burst: 100

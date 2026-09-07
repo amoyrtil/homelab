@@ -3,37 +3,97 @@
 ## このドキュメントの位置づけ
 
 homelab に Kubernetes クラスターと GitOps ベースの CI/CD を整備するための計画である。
+コントロールプレーンに HP EliteDesk 800 G6 を3台、ワーカーに MINISFORUM MS-03 を使う本番構成を対象とする。
+
+このドキュメントには決定した内容だけを書く。
+なぜそう決めたかの根拠、検証の経過、途中で否定した仮説は [knowledge/](knowledge/) に置く。
 
 前バージョンの計画は `plan_old.md` に退避した。
 旧計画はハードウェア構成とネットワーク構成が未検証のまま、ファイル単位の実装タスクまで書き切っていた。
 前提が覆れば計画全体が無効になる構造だったため、検証と設計を先に置く形に組み替えた。
 
-このドキュメントでは、次の二つだけを確度高く固める。
+## 現在地
 
-- **ネットワーク設計**：将来導入する機器をすべて接続しても破綻しない VLAN 構成を、実装前に確定させる。
-- **フェーズ1の検証**：MINISFORUM S100-WLP が etcd のコントロールプレーンノードとして使えるかを判定する。判定そのものは 2026年8月30日の Step 3 で終わっている。その後コントロールプレーンの機種を入れ替える方針が決まったため、現在のフェーズ1は残る検証項目を整理する段階にある。
+**リハーサル（手順2）の R3 まで完了。次は R4。**
+最終更新は 2026年9月6日である。
 
-本構築（Flux、Cilium、ストレージ、監視）は方針と決定待ち事項の整理に留める。
-これらはフェーズ1の判定結果に依存するため、いま詳細化しても手戻りになる。
+### いまのクラスターの状態
+
+**全ノードの電源が落ちている。** ディスクの内容は消していないため、電源を入れれば下記の状態から再開できる。
+
+| ノード | 機器 | アドレス | 状態 |
+| --- | --- | --- | --- |
+| cp-1 | S100-WLP（morty） | 192.168.20.31 | 停止中。Talos v1.14.0 と Cilium が入っている |
+| worker-1 | MS-03 | 192.168.20.41 | 停止中 |
+
+入っているものは Talos v1.14.0、Kubernetes v1.37.0、Cilium v1.20.1（kube-proxy 置換、L7 proxy、Gateway API、L2 Announcement）である。
+`GatewayClass`、`CiliumLoadBalancerIPPool`（192.168.20.200-250）、`CiliumL2AnnouncementPolicy` は残してある。
+検証に使った nginx と Gateway は削除済みで、`default` namespace は空である。
+
+これはリハーサル環境であり、EliteDesk 到着後に本番として組み直す。
+クラスター名もノード名も暫定のままでよい。
+
+### 次にやること
+
+**R4: Cilium BGP を UCG-Fiber と対向させる。**
+
+着手前に2つ決める必要がある。
+
+- **BGP の ASN** — クラスター側とルーター側で別の番号を使い、eBGP にする。プライベート ASN（64512-65534）から選ぶ
+- **UCG-Fiber の FRR 設定** — UniFi の Settings → Routing → BGP に設定ファイルをアップロードする方式である。UniFi OS 4.1.13 以降で対応
+
+R4 が通れば L2 Announcement は不要になる。
+`bootstrap/cilium-networks.yaml` の `CiliumL2AnnouncementPolicy` を落とし、`CiliumBGPClusterConfig` に置き換える。
+
+### 作業の進め方
+
+- [x] **1. テンプレートの評価** — `onedr0p/cluster-template` を採用するか判断する。記録は [knowledge/cluster-template-evaluation.md](knowledge/cluster-template-evaluation.md)
+- [ ] **2. リハーサル** — いま動いているクラスターで、フェーズ1の構成を通す。R1 から R3 まで完了。詳細は「リハーサル」節
+- [ ] **3. 知見の集約** — 2 の結果を `knowledge/` に記録する。R1 から R3 の分は [knowledge/talos-operations.md](knowledge/talos-operations.md) に反映済み
+- [ ] **4. 規約の整備** — 命名規則など homelab 全体のルールを決め、プロジェクトルートの `CLAUDE.md` を更新する
+- [ ] **5. フェーズ1の構築** — EliteDesk 到着後、クラスターを本番として組み直す
+
+### 作業環境
+
+ツールは `mise` で固定している。リポジトリのルートで `mise install` を実行すれば揃う。
+`KUBECONFIG` と `TALOSCONFIG` も `.mise/config.toml` で設定しているため、`cd` するだけで接続先がそろう。
+
+`talos/clusterconfig/` は gitignore 対象である。
+消えている場合は `cd talos && talhelper genconfig` で再生成する。
+
+### 技術判断の基準
+
+選択肢を評価するときは、次の3点を毎回確認する。
+
+1. 一昔前のデファクトスタンダードではなく、最新トレンドを踏まえた現時点でもっとも合理的な手法になっているか
+2. スケーラビリティを考慮し、不要な再構築や手戻りを避けているか
+3. 現時点で利用しない不要な技術スタックは導入せず、ミニマムな構成に保っているか
 
 ## 機材
 
-保有状況によって、ネットワーク設計とクラスター検証で前提が異なる。
-
 ### 現在保有している機材
-
-フェーズ1の検証はこの範囲だけで完結させる。
 
 | 機器 | 台数 | 用途 |
 | --- | --- | --- |
 | UniFi Cloud Gateway Fiber | 1 | ルーター、VLAN、DHCP、ファイアウォール |
-| アンマネージド 1GbE スイッチ | 1 | 検証では未使用（UCG-Fiber の LAN ポートに直結する） |
-| MINISFORUM S100-WLP | 3 | 検証対象。コントロールプレーンノード候補 |
+| アンマネージド 1GbE スイッチ | 1 | 未使用（UCG-Fiber の LAN ポートに直結する） |
 | MINISFORUM MS-03 | 1 | ワーカーノード |
+| MINISFORUM S100-WLP | 3 | 2台目の MS-03 を調達するまでのワーカー候補。1台は Pi-hole を稼働中 |
 
-S100-WLP 3台のうち1台は Ubuntu で Pi-hole を稼働させており、家庭内の DNS を担っている。
-この1台を Talos に転用すると宅内の名前解決が止まるため、検証は 2台構成で進め、3台構成はフェーズ1の最後に回す。
-3台化の前提条件は Pi-hole の移設先を確保することである。
+S100-WLP はコントロールプレーンの候補として評価し、etcd の要件を満たすことを確認したが、EliteDesk 800 G6 への置き換えを決めたため役割から外れた。
+経緯は [knowledge/s100-etcd-evaluation.md](knowledge/s100-etcd-evaluation.md) にある。
+
+3台のうち1台は Ubuntu で Pi-hole を稼働させており、家庭内の DNS を担っている。
+この1台を転用するには Pi-hole の移設先を先に決める必要がある。
+
+### 導入予定のコントロールプレーン
+
+| 機器 | 台数 | 用途 |
+| --- | --- | --- |
+| HP EliteDesk 800 G6 | 3 | コントロールプレーンノード |
+
+ストレージは SATA と NVMe であり、S100-WLP のような UFS の制約を受けない。
+標準 Talos がそのまま使える。
 
 ### 将来導入する機器
 
@@ -144,732 +204,81 @@ UniFi の mDNS リフレクタを両 VLAN で有効化する必要がある。
 ### 未決定事項
 
 - **UniFi Protect の録画先**：UCG-Fiber はストレージを持たないため、カメラ2台の録画先が存在しない。UNVR の追加、DS923+ の Surveillance Station、Kubernetes 上の NVR（Frigate 等）が候補になる。選択によって Camera VLAN のポリシーが変わる。
-- **DNS の常用系と待機系の役割分担**：現在は S100-WLP 1台の Ubuntu 上で Pi-hole が家庭内 DNS を担っている。トポロジ図の Backup DNS は待機系にあたる。Pi-hole を Kubernetes 上に移すなら、クラスター停止時のフォールバックとして Backup DNS が機能する構成になる。ただしフェーズ1の期間中は、検証で作り直しを繰り返すクラスターに家庭の DNS を載せるわけにはいかない。Backup DNS を先に常用系として立てるか、Pi-hole を別ハードウェアへ移すかを決める必要がある。
+- **DNS の常用系と待機系の役割分担**：現在は S100-WLP 1台の Ubuntu 上で Pi-hole が家庭内 DNS を担っている。トポロジ図の Backup DNS は待機系にあたる。Pi-hole を Kubernetes 上に移すなら、クラスター停止時のフォールバックとして Backup DNS が機能する構成になる。ただしクラスターが安定するまでは、作り直しを繰り返す環境に家庭の DNS を載せるわけにはいかない。Backup DNS を先に常用系として立てるか、Pi-hole を別ハードウェアへ移すかを決める必要がある。
 - **10GbE 配線の到達範囲**：前掲の「トポロジ図で確認が必要な点」を参照。
 
-## フェーズ1: S100-WLP の etcd 性能評価
+## コントロールプレーンのセットアップ
 
-### 目的
+HP EliteDesk 800 G6 DM を3台、コントロールプレーンノードとして構築する。
 
-S100-WLP は UFS ストレージを採用しており、Talos v1.13 までの標準カーネルには UFS ドライバが含まれない。
-そのため `talos-ufs` のカスタムビルドが必須になる。
-この制約は v1.14 で解消された。経緯は「Talos v1.14 への移行と talos-ufs の存廃」に記す。
+### ハードウェアと Talos での扱い
 
-このフェーズで判定するのは、UFS ストレージの fsync レイテンシが etcd に耐えるかである。
-etcd はスループットではなく fsync 遅延で不安定になる。
-判定結果に応じて、S100-WLP を継続するか HP EliteDesk 800 G6 に置き換えるかを決める。
+| 項目 | 内容 | Talos 側 |
+| --- | --- | --- |
+| CPU | Intel Core i5-10500T（Comet Lake、6コア12スレッド、TDP 35W） | `siderolabs/intel-ucode` |
+| RAM | 8GB | — |
+| ストレージ | 256GB SSD | 実機で NVMe か SATA かを確認する |
+| NIC | 内蔵 1GbE（Intel I219-LM 想定） | `e1000e`。カーネルに組み込み済み |
 
-### 前提の変更（2026年9月6日）
+3台とも同一構成である。
 
-コントロールプレーン3台を HP EliteDesk 800 G6 に置き換える方針が決まった。
-機種の二択を判定するというフェーズ1の目的は、この時点で失効している。
+RAM 8GB はコントロールプレーン専用なら足りる。
+Talos 本体、etcd、apiserver、controller-manager、scheduler、kubelet、containerd、CNI を合わせて 3GB から 4GB の見込みである。
+`allowSchedulingOnControlPlanes` を `false` に保つ限り余裕がある。
+逆にコントロールプレーンにもワークロードを載せる構成にするなら、ここが最初に詰まる。
 
-Step 3 までの測定結果は残す。
-S100-WLP の UFS が etcd の fsync 要件を満たすことと、同じ機種でも個体によって定常時のレイテンシが違うことは、測定として成立しており、S100-WLP を別の役割で使うときの判断材料になる。
+NIC が 1GbE でワーカーの 10GbE と差があるが、etcd はスループットではなく fsync レイテンシで不安定になるため、この差は効かない。
 
-Step 4（3台構成への拡張と障害試験）は実施しない。
-測る対象だった機種がコントロールプレーンから外れるため、結果を使う先がない。
+### ISO の作成
 
-S100-WLP の行き先は2つある。
-2台目の MS-03 を調達するまでのあいだ、ワーカーとして使う可能性がある。
-その場合、標準 Talos で起動できるかどうかが効いてくる。
-`talos-ufs` はカスタムビルドであるため Image Factory による拡張の追加が使えず、ワーカーに `iscsi-tools` などが必要になった時点で行き詰まるからである。
-
-### Step 0（完了済み）: fio による fdatasync レイテンシ測定
-
-クラスターを組む前に、Live USB 上の fio でストレージ単体の fdatasync レイテンシを測定した。
-
-```
-fio --rw=write --ioengine=sync --fdatasync=1 \
-    --directory=<測定対象> --size=22m --bs=2300 --name=etcd-fsync
-```
-
-**結果**：大半の書き込みは 10ms 以下で完了した。
-ただしテスト後半、連続した書き込みが頻発する局面で1回だけ外れ値が発生した。
-外れ値は 90ms 前後だったが、この数値は記憶によるもので裏付けが取れていない。
-UFS ストレージの特性による頭打ちと考えられる。
-
-この TODO は 2026年8月30日に「再測定しない」と判断して閉じた。
-なお外れ値の存在そのものは、同日の Step 2.5 で etcd のメトリクスとして裏付けが取れている（64ms から 128ms が30分で17件）。
-
-フェーズ1の主判定は Step 3 の etcd メトリクス（`etcd_server_leader_changes_seen_total` と `etcd_server_proposals_failed_total`）であり、fio の単体値は判定を分けない。
-90ms という数値が裏付けを欠くことは、Step 3 の結果を解釈する際の留保として扱う。
-
-**この結果が意味すること**：定常時の性能は etcd の要件を満たしている。
-残る懸念は持続書き込み負荷下でのテールレイテンシに絞られた。
-
-90ms という値は、etcd の既定 election timeout である 1000ms の 1割に満たない。
-単発であればリーダー選出には至らない見込みである。
-一方で既定の heartbeat interval 100ms とはほぼ同等の大きさであり、この規模の遅延が高頻度で発生すれば raft のハートビートが滞る。
-したがって判定を分けるのは外れ値の大きさではなく **発生頻度** である。
-以降の検証は「持続負荷下で外れ値がどの頻度で再現し、リーダー選出を誘発するか」を確かめることに集中する。
-平均値や p99 だけを見ても判定できない。
-
-### 検証構成
-
-S100-WLP 2台と MS-03 1台を UCG-Fiber の LAN ポートに直結する。
-アンマネージドスイッチは使わない。
-
-UCG-Fiber には VLAN 20 だけを先に定義し、検証機を VLAN 20 に載せる。
-本構築時のアドレス再採番を避けるためであり、この時点で Untrusted や Camera の設定まで行う必要はない。
-
-| ノード | 機種 | アドレス | 役割 | 投入時期 |
-| --- | --- | --- | --- | --- |
-| cp-1 | S100-WLP | 192.168.20.31 | コントロールプレーン | Step 1 |
-| cp-2 | S100-WLP | 192.168.20.32 | コントロールプレーン | Step 3 |
-| cp-3 | S100-WLP | 192.168.20.33 | コントロールプレーン | Step 4（Pi-hole 移設後） |
-| worker-1 | MS-03 | 192.168.20.41 | ワーカー | Step 3 |
-| VIP | — | 192.168.20.100 | Kubernetes API エンドポイント | Step 3 |
-
-### 既知の制約: S100-WLP の NIC 障害と USB NIC による回避
-
-3台の S100-WLP のうち2台は、内蔵の Intel I226-V 2.5GbE でリンクが確立しない。
-2026年8月11日の切り分けで、1000BASE-T と 2500BASE-T が使う 4-5 番ペアと 7-8 番ペアの信号経路にハードウェア障害があると判明した。
-2ペアしか使わない 100BASE-TX は成立するため、100Mbps でのみリンクする。
-経緯と否定した仮説の一覧は `info.md` に記録してある。
-
-| 個体 | 役割 | 内蔵 I226-V | 検証で使う NIC |
-| --- | --- | --- | --- |
-| morty | cp-1 | 4ペアの物理層障害。10Mbps でのみ安定 | USB ドングル（`r8152`、1GbE） |
-| jerry | cp-2 | 4ペアの物理層障害。100Mbps では安定 | USB ドングル（`r8152`、1GbE） |
-| rick | cp-3 | 正常。2.5GbE をエラー0で確立 | 内蔵 I226-V |
-
-cp-1 と cp-2 は USB Ethernet ドングルで接続する。
-Talos は `r8152` と `ax88179` をカーネルに含むため、追加の拡張なしに動作する。
-
-**ドングルは個体を入れ替えてはならない。**
-UCG-Fiber 側で MAC アドレスに対する DHCP 予約を設定しているためである。
-
-| ドングル MAC | ノード | 予約アドレス | 個体の内蔵 I226-V の MAC |
-| --- | --- | --- | --- |
-| `6c:1f:f7:d3:99:42` | cp-1 / morty | 192.168.20.31 | `58:47:ca:76:07:66` |
-| `6c:1f:f7:d3:99:34` | cp-2 / jerry | 192.168.20.32 | `58:47:ca:7b:a8:48` |
-
-入れ替えても、machine config を持つノードは静的アドレスで動き続けるため気付けない。
-問題が出るのは machine config を持たないメンテナンスモードのときで、DHCP 予約に従って別ノードのアドレスを取りに行き、稼働中のノードと衝突する。
-2026年9月6日の Stage B 準備中に実際に起きた。
-内蔵 I226-V の MAC は個体に固定なので、どちらの機体かを見分ける手がかりになる。
-
-machine config ではインターフェースを名前で指定せず、`deviceSelector` で `driver: r8152` を指定する。
-`enp0s20f0u1` という名前は USB ポートの位置に依存し、差し替えのたびに変わるためである。
-
-**USB-C 接続による 2.5GbE 化は、検証中は採らない。**
-ドングルを USB-A から USB-C ポートに移すと 1GbE ではなく 2.5GbE でリンクすることは確認済みである。
-ただし USB-C ポートの空きがなくなるため、給電を USB-C PD から内蔵 PoE に切り替える必要がある。
-内蔵 PoE の PD 回路は、`info.md` §5.5 で 4-5 番ペアと 7-8 番ペアの障害の被疑箇所として挙げた部位そのものである。
-原因が確定していない回路に給電を依存させると、リンクが不安定になったときの切り分けが成立しなくなる。
-帯域はフェーズ1の判定指標ではないため、1GbE のまま進める。
-
-### コントロールプレーン2台で本試験を行う理由
-
-Pi-hole の稼働による台数制約は、この検証に限っては不利にならない。
-
-etcd はメンバー数から quorum を決める。
-2メンバーの quorum は 2 であり、すべてのコミットが両ノードの fsync 完了を待つ。
-3メンバーの quorum は 2 なので、遅い1台の fsync を待たずにコミットが成立しうる。
-つまり fsync のテールレイテンシに対しては **2台構成のほうが厳しい試験になる**。
-S100-WLP の外れ値が commit を直撃するかを見るという目的には、2台構成が適している。
-
-2台構成で成立しないのは障害試験だけである。
-1台を落とすと quorum を失いクラスターが停止するため、リーダー選出時間の測定には3台目が要る。
-そこで Step 4 を最後に置き、Pi-hole の移設が済んでから実施する。
-
-### Step 1: talos-ufs イメージでの導入確認
-
-`talos-ufs` のカスタムイメージを使うことは確定事項である。
-標準の Talos ISO による S100-WLP の起動は検証済みで、成立しない。
-標準 Talos のカーネルは UFS ドライバ（`ufshcd-pci`）を含まず、EFI パーティションが 100MiB 固定のため 4096バイトセクタに対応できない。
-`talos-ufs` はこの2点を上流へのパッチで解消しており、S100-WLP（Intel N100 / 256GB UFS 2.1）は同プロジェクトの Verified Devices に登録されている。
-
-cp-1（S100-WLP 1台）に `talos-ufs` の ISO で起動し、installer イメージで Talos を導入する。
+拡張は `intel-ucode` だけにする。
 
 ```yaml
-machine:
-  install:
-    disk: /dev/sda  # UFS デバイス
-    image: ghcr.io/amoyrtil/talos-ufs-installer:v1.13.9
+customization:
+  systemExtensions:
+    officialExtensions:
+      - siderolabs/intel-ucode
 ```
 
-- [x] Secure Boot を無効化して `talos-ufs` の ISO から起動できること
-- [x] メンテナンスモードで `talosctl get disks --insecure` に UFS ディスクが現れること
-- [x] installer イメージによるインストールが完了し、ディスクから起動できること
-- [x] 使用した `talos-ufs` のバージョンと対応する Talos バージョンを記録する
-
-**2026年8月30日の実測（cp-1 / morty、メンテナンスモード）**
-
-| 確認項目 | 結果 |
-| --- | --- |
-| Talos バージョン | `v1.13.9-dirty`（SHA `3ebd10a7-dirty`）。上流 v1.13.9 にパッチを当てたビルド |
-| Secure Boot | `SecurityState.SECUREBOOT: false` |
-| UFS ディスク | `sda` / 256GB / transport `ufshcd` / `KLUEG8U1EA-B0C1` |
-| システム拡張 | なし（`talosctl get extensions` が空） |
-
-インストール後のパーティション構成は次のとおりで、ディスクから起動して `STAGE: running` に到達した。
+この内容で登録すると、次の ID が返る。
 
 ```
-sda1  2.6 GB  vfat       EFI
-sda2  1.0 MB  talosmeta  META
-sda3  105 MB  xfs        STATE
-sda4  253 GB  xfs        EPHEMERAL
+2d61dd07b20062062ea671b4d01873506103b67c0f7a4c3fb6cf4ee85585dcb8
 ```
 
-EFI が 2.6GB で作られている点が、talos-ufs のパッチが効いている証拠である。
-標準 Talos は EFI パーティションを 100MiB 固定で作るため、4096バイトセクタの UFS では成立しない。
-
-インストール前の `/dev/sda` には Ubuntu 24.04 が残っていた（vfat 1.1GB と ext4 255GB）。
-旧 GPT と旧 EFI の残骸を残さないよう `machine.install.wipe: true` でゼロクリアしてから導入した。
-
-ISO に拡張は一つも含まれていない。
-フェーズ1のコントロールプレーンは etcd を動かすだけで拡張を必要としないため、この時点では支障にならない。
-ただし talos-ufs はカスタムビルドであり、Image Factory による拡張の追加が使えない。
-将来コントロールプレーンに拡張が要る場合は、talos-ufs 側でイメージを作り直す必要がある。
-
-この懸念は 2026年9月6日に解消した。
-v1.14 の標準 Talos が S100-WLP で動くため、拡張が要るなら Image Factory の schematic に足せばよく、talos-ufs でイメージを作り直す必要がなくなった。
-
-### Step 2: 単一コントロールプレーンでのメトリクス取得経路の確立
-
-talhelper でコントロールプレーン1台の最小クラスターを構築する。
-CNI は Talos 既定のままでよい。
-etcd の評価に CNI の選択は影響しない。
-
-etcd のメトリクスは既定では mTLS 付きのクライアントポートにしか出ない。
-検証中は Talos の machine config に次を加え、認証なしのメトリクスエンドポイントを開ける。
-
-```yaml
-cluster:
-  etcd:
-    extraArgs:
-      listen-metrics-urls: http://0.0.0.0:2381
+```
+ISO         https://factory.talos.dev/image/2d61dd07b20062062ea671b4d01873506103b67c0f7a4c3fb6cf4ee85585dcb8/v1.14.0/metal-amd64.iso
+installer   factory.talos.dev/metal-installer/2d61dd07b20062062ea671b4d01873506103b67c0f7a4c3fb6cf4ee85585dcb8:v1.14.0
 ```
 
-これは検証専用の設定であり、本構築には持ち込まない。
+定義は `talos/schematics/elitedesk-schematic.yaml` にある。
 
-- [x] `talosctl -n 192.168.20.31 etcd status` が応答すること
-- [x] `curl http://192.168.20.31:2381/metrics` で etcd メトリクスが取得できること
-- [x] 取得したメトリクスを継続記録する手段を用意する（Prometheus、または定期的な curl とログ保存）
+### 拡張を絞る根拠
 
-**2026年8月30日の実測（cp-1 / morty、単一コントロールプレーン）**
+MS-03 の5つをそのまま持ち込む必要はない。
+コントロールプレーンはワークロードを載せないため、用途が違う。
 
-| 確認項目 | 結果 |
-| --- | --- |
-| `talosctl etcd status` | 応答あり。メンバー `dd7677abffb26e5f`、自身がリーダー、etcd 3.6.12 |
-| メトリクスエンドポイント | `http://192.168.20.31:2381/metrics` から `etcd_` 系 564 行を取得 |
-| Talos VIP | `192.168.20.100/32` が `enp0s20f0u1` に付与された |
-
-VIP は plan.md では Step 3 で有効化する予定だったが、Step 1 の時点で入れた。
-`controlPlane.endpoint` は証明書と kubeconfig に焼き込まれるため、後から VIP に切り替えると設定一式の再生成になる。
-単一コントロールプレーンでも VIP は成立するため、最初から `https://192.168.20.100:6443` を採用した。
-
-**継続記録の手段**
-
-Prometheus は使わない。
-コントロールプレーン上で動かすと、測定対象そのものに I/O を足すことになるためである。
-代わりに手元の Mac から定期的に curl するスクリプトを置いた。
-
-| ファイル | 役割 |
-| --- | --- |
-| `talos/phase1/collect-etcd-metrics.sh` | 指定間隔で `:2381/metrics` を取得し、判定に使うメトリクスとリンク状態を TSV に追記する |
-| `talos/phase1/analyze-etcd-metrics.py` | 収集結果から主判定の増分と、fsync / commit の分位点および閾値超過の件数を出す |
-
-```bash
-talos/phase1/collect-etcd-metrics.sh runs/step3-load 15 192.168.20.31 192.168.20.32
-talos/phase1/analyze-etcd-metrics.py runs/step3-load
-```
-
-**「10ms 超」の測定について**
-
-etcd の `wal_fsync` ヒストグラムのバケット境界は 1ms から 2 のべき乗で刻まれており、10ms の境界を持たない。
-したがって「10ms を超える fsync の発生頻度」は、そのままでは測れない。
-最も近い実測可能な境界は **8ms** であり、以降はこれを 10ms の代理として扱う。
-8ms は 10ms より厳しい側に倒れているため、判定が甘くなる方向の誤差は生じない。
-
-最大値も同様にバケット単位でしか言えない。
-`max` は「この境界以下」という上限として記録する。
-
-### Step 2.5: 単一コントロールプレーンでの先行負荷試験
-
-cp-2 と worker-1 が揃う前に、cp-1 だけで持続負荷をかけた。
-2台構成のほうが厳しい試験であることは変わらないが、単一構成で落ちるなら2台を待つ必要がない。
-早期に不合格が分かれば機材の判断も早まる、という理由で Step 3 の前に実施した。
-
-負荷は手元の Mac から kubectl で Secret を作っては消すループを20並列で回した。
-コントロールプレーン上に負荷生成器を置いていないのは、測定対象に etcd 以外の I/O を足さないためである（Step 5 の緩和策3と同じ考え方）。
-
-```bash
-talos/phase1/run-step.sh step2-1cp 1800 1800 192.168.20.31
-```
-
-**2026年8月30日の結果（cp-1 / morty、単一コントロールプレーン、負荷 119 ops/s）**
-
-| 指標 | 定常30分 | 負荷30分 |
+| 拡張 | 判断 | 根拠 |
 | --- | --- | --- |
-| `wal_fsync` 観測数 | 3,182 | 186,337 |
-| `wal_fsync` p50 | 0.57ms | 1.72ms |
-| `wal_fsync` p99 | 1.93ms | 10.69ms |
-| `wal_fsync` p99.9 | 2.55ms | 26.23ms |
-| `wal_fsync` 最大 | 8ms 以下 | 128ms 以下 |
-| 8ms 超の割合 | 0.000% | 1.405% |
-| 16ms 超 | 0 件 | 375 件 (0.201%) |
-| 32ms 超 | 0 件 | 80 件 (0.043%) |
-| 64ms 超 | 0 件 | 17 件 (0.009%) |
-| `backend_commit` p99 | 3.65ms | 21.39ms |
-| `backend_commit` 25ms 超 | 0 件 | 251 件 (1.435%) |
-| `leader_changes_seen_total` | 増加なし | 増加なし |
-| `proposals_failed_total` | 0 | 0 |
-| USB NIC のリンク変化 | なし | なし |
-
-**Step 0 の外れ値は再現した。**
-64ms から 128ms の帯域に30分で17件、およそ1分に0.6回の頻度で発生している。
-「90ms 前後の外れ値が1回」という記憶による記述は、持続負荷下では裏付けが取れたことになる。
-同時に、この頻度と大きさではリーダー選出に至らないことも確認できた。
-
-定常状態では 8ms を超える fsync が3,182件中1件も出ていない。
-外れ値は UFS の定常的な性質ではなく、持続書き込みが誘発するものである。
-
-**この結果の読み方には留保が要る。**
-単一メンバーの etcd には raft のレプリケーションもピア間通信も存在せず、自ノードが常にリーダーであってリーダー選出の機会自体がない。
-したがって `leader_changes_seen_total` が増えないことは、2メンバー構成での同じ結果に比べて弱い証拠にしかならない。
-このステップで確かめられたのは「UFS の fsync 分布が 186,337 サンプルで 128ms 以内に収まる」という**ディスク単体の事実**までである。
-可否の判定は Step 3 で行う。
-
-### Step 3: コントロールプレーン2台での持続書き込み負荷試験
-
-cp-2 と worker-1 を投入し、コントロールプレーン2台とワーカー1台の構成にする。
-Talos VIP（192.168.20.100）もここで有効にする。
-このステップがフェーズ1の本命である。
-
-etcd に継続的な書き込みを発生させ、Step 0 で観測した外れ値がクラスター上で再現するかを見る。
-Secret と ConfigMap の作成と削除を繰り返すループ、または kube-burner を使う。
-raft のレプリケーションが加わることで、単体ベンチとは異なる fsync パターンになる。
-
-- [x] 30分から60分の連続負荷をかける
-- [x] `etcd_disk_wal_fsync_duration_seconds` の p99、p99.9、max を記録する
-- [x] `etcd_disk_backend_commit_duration_seconds` の p99 を記録する
-- [x] `etcd_server_leader_changes_seen_total` の増加を監視する
-- [x] `etcd_server_proposals_failed_total` を監視する
-- [x] **10ms を超える fsync の発生頻度**を記録する（判定を分けるのは最大値ではなく頻度である）
-- [x] 負荷を止めた定常状態でも同じ指標を30分記録し、負荷時との差を取る
-
-**USB NIC 起因との切り分け**
-
-cp-1 と cp-2 は USB ドングルで接続する。
-このステップの主判定である `etcd_server_leader_changes_seen_total` は、UFS の fsync 遅延だけでなく、raft のピア間通信が滞っても増える。
-切り分けの手段を用意しないと、リーダー選出が起きたときに機種の判定そのものが下せない。
-
-- [ ] `etcd_network_peer_round_trip_time_seconds` の p99 を記録する（ネットワーク側の遅延を fsync 側と分離する）
-- [ ] 両ノードの USB NIC のリンクフラップを記録する（`LinkStatus` の VERSION 増加、または `talosctl dmesg` の carrier 変化）
-- [ ] `leader_changes` が増えた場合、同時刻に fsync の外れ値があったのかリンクフラップがあったのかを突き合わせる
-
-fsync の外れ値と無関係にリーダー選出が起きるなら、それは UFS ではなく USB NIC の問題であり、S100-WLP の可否判定には使えない。
-
-- [x] `etcd_network_peer_round_trip_time_seconds` の p99 を記録する
-- [x] 両ノードの USB NIC のリンクフラップを記録する
-- [x] `leader_changes` が増えた場合の突き合わせ（増加しなかったため該当なし）
-
-### Step 3 の結果
-
-worker-1（MS-03）は投入していない。
-etcd の fsync 判定にワーカーの有無は効かないため、cp-2 が揃った時点で先に実施した。
-MS-03 は別途セットアップする。
-
-```bash
-talos/phase1/run-step.sh step3-2cp 1800 1800 192.168.20.31 192.168.20.32
-```
-
-事前に両メンバーで `talosctl etcd defrag` を実行した。
-Step 2.5 の負荷で boltdb が 291MB まで膨らみ、利用率が 0.40% まで落ちていたためである。
-断片化した状態のまま測ると、ディスクを測っているのか蓄積した断片化を測っているのか分からなくなる。
-defrag 後は 1.2MB、利用率 100%、alarm なしから開始した。
-
-**2026年8月30日の結果（cp-1 + cp-2、2メンバー、負荷 110 ops/s、30分）**
-
-| 指標 | cp-1（morty / 256GB） | cp-2（jerry / 128GB） |
-| --- | --- | --- |
-| `wal_fsync` 観測数 | 176,608 | 174,722 |
-| p50 | 1.55ms | 0.80ms |
-| **p99** | **7.98ms** | **6.63ms** |
-| p99.9 | 24.62ms | 31.32ms |
-| 最大 | 128ms 以下 | 128ms 以下 |
-| 8ms 超 | 0.962% | 0.871% |
-| 16ms 超 | 0.166% | 0.596% |
-| 32ms 超 | 0.043% | 0.078% |
-| 64ms 超 | 9 件 (0.005%) | 2 件 (0.001%) |
-| **`backend_commit` p99** | **20.72ms** | **28.11ms** |
-| `backend_commit` p99.9 | 44.63ms | 56.87ms |
-| `backend_commit` 25ms 超 | 1.356% | 2.836% |
-| `peer_rtt` p99 | 25.30ms | 25.28ms |
-| **`leader_changes_seen_total`** | **増加なし** | **増加なし** |
-| **`proposals_failed_total`** | **増加なし** | **増加なし** |
-| VIP の移動 | なし（cp-1 が保持） | — |
-| リンクのフラップ | 0 回 | 0 回 |
-
-同条件の定常30分では、cp-1 の 8ms 超が 4,391件中0件、cp-2 が 4,136件中3件だった。
-外れ値は持続書き込みが誘発するものであり、UFS の定常的な性質ではない。
-
-**外れ値は集中していない。**
-15秒区間あたりの 8ms 超は、cp-1 が中央値13件・最大22件、cp-2 が中央値8件・最大25件だった。
-最悪区間でも区間内 fsync の 1.6% 程度で、連続する heartbeat interval を埋める密度には遠い。
-最大値も 128ms 以下であり、election timeout の既定 1000ms に対して1割強にとどまる。
-
-**判定：主判定を両ノードで満たした。**
-2メンバーの quorum では全コミットが両ノードの fsync 完了を待ち、リーダー選出の機会も存在する。
-その条件で30分の持続負荷をかけてリーダー選出も提案失敗も発生しなかった。
-
-副判定では `wal_fsync` p99 が両ノードとも 10ms を下回り、Step 2.5 の単一構成（10.69ms）より改善した。
-外れたのは cp-2 の `backend_commit` p99 の 28.11ms（目安 25ms 未満）だけである。
-plan.md の基準どおり、主判定を満たすため S100-WLP は使えると判定する。
-
-### 判定の枠組みについて
-
-合否基準は「S100-WLP か EliteDesk か」という機種の二択で書かれているが、この枠組みは実態に合っていない。
-
-| 指標（定常30分、無負荷） | cp-1 / morty | cp-2 / jerry |
-| --- | --- | --- |
-| `wal_fsync` 8ms 超 | 0 件 / 4,391 | 3 件 / 4,136 |
-| `wal_fsync` 最大 | 8ms 以下 | 64ms 以下 |
-| `backend_commit` p99.9 | 4.26ms | 29.41ms |
-| `backend_commit` 25ms 超 | 0 件 | 7 件 |
-
-無負荷の時点で個体差が出ている。
-UFS は morty が 256GB の `KLUEG8U1EA-B0C1`、jerry が 128GB の `KLUDG4U1EA-B0C1` で、容量も型番も異なる。
-NIC について info.md が示したのと同じ構図が、ストレージにも現れている。
-
-したがって判定は「機種として使えるか」ではなく「この個体を使うか」で下す。
-S100-WLP という機種に etcd が耐えないという結論は、今回の測定からは出ない。
-
-ここで主判定を満たさなければ Step 5 の緩和策に進む。
-主判定は満たしたため、Step 5 には進まない。
-
-### Step 4: コントロールプレーン3台への拡張と障害試験（実施しない）
-
-コントロールプレーンを EliteDesk 800 G6 に置き換えるため、このステップは実施しない。
-S100-WLP のリーダー選出時間を測っても、その値を使う構成が存在しないからである。
-以下は当初の計画として残す。
-
-Pi-hole の移設が済んでから実施する。
-cp-3 を投入して3台構成にする。
-
-3台化により quorum が 3 分の 2 になり、遅いノード1台の fsync を待たずにコミットが成立するようになる。
-Step 3 より条件は緩む。
-このステップの目的は、テールレイテンシの再評価ではなく、ノード障害時の挙動を測ることにある。
-
-- [ ] Pi-hole の移設先を決めて移す
-- [ ] cp-3 を投入し、3メンバーの etcd が正常化することを確認する
-- [ ] コントロールプレーン1台を電源断し、リーダー選出に要する時間を測る
-- [ ] 復帰後の再同期に要する時間を測る
-- [ ] Step 3 と同じ負荷をかけた状態で電源断を繰り返す
-
-### 合否基準
-
-主判定で1つでも外れたら、Step 5 の緩和策を試す。
-緩和策でも満たせないなら EliteDesk に置換する。
-
-**主判定**
-
-| 指標 | 合格ライン |
-| --- | --- |
-| `etcd_server_leader_changes_seen_total` | 30分の持続負荷中に増加しない |
-| `etcd_server_proposals_failed_total` | 0 |
-
-**副判定（傾向の把握）**
-
-| 指標 | 目安 | 出典 |
-| --- | --- | --- |
-| `etcd_disk_wal_fsync_duration_seconds` p99 | 10ms 未満 | etcd 公式のハードウェア推奨 |
-| 同 p99.9 および max | election timeout（既定 1000ms）に対して十分小さい | — |
-| 10ms 超の fsync の発生頻度 | 連続する heartbeat interval（既定 100ms）を埋めない程度 | — |
-| `etcd_disk_backend_commit_duration_seconds` p99 | 25ms 未満 | etcd 公式のハードウェア推奨 |
-
-副判定を外れても主判定を満たすなら、S100-WLP は使える。
-外れ値がリーダー選出に至らない範囲に収まっているという意味になる。
-
-### Step 5: 主判定を外れた場合の緩和策
-
-置換を決める前に、次を順に試す。
-
-1. **etcd のタイミングパラメータを緩める**：`cluster.etcd.extraArgs` で `election-timeout` と `heartbeat-interval` を引き上げ、fsync の外れ値を吸収できるようにする。フェイルオーバー時間との引き換えになる。
-2. **書き込み量を減らす**：自動 compaction の間隔と defrag のタイミングを調整する。
-3. **コントロールプレーンのワークロードを排除する**：`node-role.kubernetes.io/control-plane:NoSchedule` の taint を確実に効かせ、etcd 以外の I/O を CP ノードから除く。
-
-これらで主判定を満たせない場合、S100-WLP 3台を EliteDesk 3台に置き換える。
-
-## Talos v1.14 への移行と talos-ufs の存廃
-
-### 上流が UFS に対応した経緯
-
-2026年9月3日にリリースされた Talos v1.14.0 で、標準カーネルが UFS ホストコントローラに対応した。
-
-きっかけは `siderolabs/pkgs` の issue #1619 である。
-S100 を名指しした報告で、UFS が唯一の内蔵ストレージである安価な x86 ミニ PC が増えているのに Talos ではディスクが見えずインストールできない、ドライバがモジュールとしてすら作られていないのでシステム拡張や Image Factory の schematic では回避できない、という内容だった。
-
-対応は pkgs#1620 と talos#13793 に分かれており、どちらも v1.14 に入っている。
-
-| リポジトリ | 変更 |
-| --- | --- |
-| `siderolabs/pkgs` | `CONFIG_SCSI_UFSHCD=m` と `CONFIG_SCSI_UFSHCD_PCI=m` を有効化 |
-| `siderolabs/talos` | `hack/modules-amd64.txt` に `ufshcd-core.ko`、`ufshcd-pci.ko`、`governor_simpleondemand.ko` を追加 |
-
-issue の要望は `=y`（組み込み）だったが、実装は `=m`（モジュール）になった。
-Talos は `hack/modules-amd64.txt` に載っているモジュールを initramfs に含めて自動ロードするため、モジュールでも起動ディスクとして成立する。
-
-報告者は修正後の実機確認を issue にコメントしている。
-使われた個体は Intel N100 の Minisforum S100 で、UFS は Samsung `KLUEG8U1EA-B0C1` である。
-cp-1（morty）と同じ型番である。
-内蔵 UFS が `ufshcd` transport の `/dev/sd*` として現れ、インストールが通り、外部メディアなしで再起動を繰り返しても healthy を保ち、etcd を含む単一ノードクラスターが立ち上がったと報告されている。
-
-### 2つのパッチが上流でどうなったか
-
-`talos-ufs` が上流に当てているパッチは2つである。
-
-**`kernel-config.patch`** は、UFS 関連の config を `=m` から `=y` へ引き上げる。
-パッチの文脈行が示すとおり、当てる相手はすでに `=m` になった v1.14 の config である。
-README にある「`=m` では動かない」という記述は、モジュールが `hack/modules-amd64.txt` に載っていなかった時点のものであり、v1.14 では成立しない。
-
-**`efi-partition-size.patch`** は、`GrubEFISize()` を 100MiB から 512MiB に引き上げる。
-4096バイトセクタのデバイスに FAT32 を作るには、最小クラスタ数 65525 を満たすために 256MiB 強が要るためである。
-
-ただし S100 へのインストールは、このパッチが効く経路を通っていない。
-Step 1 で記録したパーティション構成には BIOS も BOOT もなく、EFI が 2.6GB になっている。
-これは UKI レイアウトであり、その EFI サイズは次の式で決まる。
-
-```
-UKIEFISize = GrubEFISize + GrubBIOSSize + GrubBootSize
-```
-
-パッチ後の値を入れると `512 + 1 + 2000 = 2513 MiB` で、10進の 2.6GB になる。
-Step 1 の実測と一致する。
-上流のままなら `100 + 1 + 2000 = 2101 MiB` で、これも 256MiB を大きく上回る。
-`efi-partition-size.patch` は GRUB レイアウトに対する保険としては意味を持つが、S100 が通る UKI レイアウトでは効いていない。
-
-上流のメンテナも `siderolabs/talos` の issue #13227 で、ISO や PXE から起動して通常どおりディスクにインストールする経路なら Talos は 4k セクタのディスクに正しくインストールできる、あの issue はディスクイメージだけの話である、と述べている。
-
-机上では、v1.14 において `talos-ufs` の存在理由は失われている。
-残るのは実機での確認である。
-
-### 検証（cp-2 / jerry）
-
-cp-2 を etcd から外し、標準 Talos v1.14 の検証に使う。
-検証後にクラスターへ戻さない。
-
-使う ISO は素の schematic（拡張もカーネル引数もなし、ID は `376567988ad370138ad8b2698212367b8edcb69b5fd68c80be1f2ec7d603b4ba`）のものである。
-
-```
-https://factory.talos.dev/image/376567988ad370138ad8b2698212367b8edcb69b5fd68c80be1f2ec7d603b4ba/v1.14.0/metal-amd64.iso
-```
-
-**Stage B（非破壊）**
-
-- [x] 標準 v1.14 の ISO から起動し、メンテナンスモードに入る
-- [x] `talosctl get disks --insecure` に `sda` が transport `ufshcd` で現れる
-- [x] `KernelModuleStatus`（v1.14 で追加。`LoadedKernelModule` は非推奨）で `ufshcd_pci` がロード済みである
-
-**Stage C（インストール）**
-
-- [x] 素の schematic の installer で machine config を適用し、インストールが完了する
-- [x] ディスクから起動し `STAGE: running` に到達する
-- [x] パーティション構成を記録する。EFI が 256MiB 以上であること
-- [x] 再起動を数回繰り返しても安定していることを確認する
-
-### 検証の結果（2026年9月6日、cp-2 / jerry）
-
-**Stage B**：標準 v1.14.0 の ISO（SHA `9abd05af`、`-dirty` なし）でメンテナンスモードに入り、UFS ディスクが見えた。
-
-| 確認項目 | 結果 |
-| --- | --- |
-| Talos バージョン | `v1.14.0`。上流の素のビルドで、パッチは当たっていない |
-| UFS ディスク | `sda` / 128GB / transport `ufshcd` / `KLUDG4U1EA-B0C1` |
-| Secure Boot | `false` |
-
-`KernelModuleStatus` では、上流が `hack/modules-amd64.txt` に追加した3つがすべて `dynamic` かつ `live` だった。
-
-```
-governor_simpleondemand   dynamic   live
-ufshcd_core               dynamic   live
-ufshcd_pci                dynamic   live
-```
-
-talos-ufs の README にある「`=m` では動かない」は、モジュールが `hack/modules-amd64.txt` に載っていなかった時点の記述であり、v1.14 では成立しない。
-
-**Stage C**：使い捨ての単一ノードクラスターとして構築し、インストールから起動、クラスター稼働までを通した。
-
-インストール後のパーティション構成は次のとおりで、BIOS も BOOT もない UKI レイアウトである。
-
-```
-sda1  2.2 GB  vfat       EFI
-sda2  1.0 MB  talosmeta  META
-sda3  105 MB  xfs        STATE
-sda4  126 GB  xfs        EPHEMERAL
-```
-
-**EFI の 2.2GB は `GrubEFISize 100 + GrubBIOSSize 1 + GrubBootSize 2000 = 2101 MiB` と一致する。**
-talos-ufs を使った Step 1 の実測が 2.6GB だったのは、`GrubEFISize` を 512MiB に上げた差分そのものである。
-上流の 100MiB のままでも、4096バイトセクタで FAT32 の最小クラスタ数 65525 を満たすのに必要な 256MiB 強を大きく上回る。
-`efi-partition-size.patch` が S100 の経路で効いていないという机上の推定が、実測で裏付けられた。
-
-クラスターとしても成立した。
-
-| 確認項目 | 結果 |
-| --- | --- |
-| Node | `Ready`、Kubernetes `v1.37.0` |
-| Talos | `v1.14.0`、カーネル `6.18.48-talos` |
-| STAGE / READY | `running` / `true` |
-| etcd | 3.7.1、単一メンバーでリーダー、healthy |
-| システム Pod | CoreDNS 2つ、flannel、kube-proxy、apiserver、controller-manager、scheduler がすべて Running |
-| ワークロード | nginx の Deployment と Service を作成し、クラスター内から HTTP 200 |
-| 外部メディアなしの再起動 | USB を抜いた状態で3回繰り返し、いずれも `stage: RUNNING` に復帰。3回目のあとも Node は `Ready`、nginx も再スケジュールされて Running |
-
-**判定：`talos-ufs` は役目を終えた。**
-
-Stage B と Stage C の両方を満たした。
-`talos-ufs` が当てている2つのパッチは、どちらも v1.14 の上流で不要になっている。
-
-| パッチ | 上流での代替 | 実測による裏付け |
-| --- | --- | --- |
-| `kernel-config.patch` | `=m` と `hack/modules-amd64.txt` への登録 | 3つのモジュールが `dynamic` かつ `live`。UFS ディスクを認識 |
-| `efi-partition-size.patch` | 不要。UKI レイアウトの EFI は 2101 MiB になる | EFI 実測 2.2GB |
-
-アーカイブする際は、v1.14 以降は上流の標準イメージを使うよう README に案内を残す。
-Verified Devices に載っているのは S100-WLP だけだが、他の UFS 機種の利用者が同じ判断を下せるようにするためである。
-
-なお、この検証で cp-2 には使い捨ての単一ノードクラスター（`ufs-verify`）が載ったままである。
-本番クラスターとは無関係で、S100-WLP を次の用途に回すときに消してよい。
-
-### クラスターの移行手順
-
-現在のクラスターは検証目的で組んだものであり、破壊的な変更を許容する。
-etcd のスナップショットは取らない。
-コントロールプレーンは数日中に EliteDesk 800 G6 へ全置換するため、いずれ再構築する。
-
-**Phase 0：復旧**
-
-- [ ] cp-1（morty）と cp-2（jerry）の電源を入れる
-- [ ] 作業端末を VLAN 20 に載せる
-- [ ] v1.13.9 のクラスターが2メンバーで戻ることを確認する
-
-**Phase 1：cp-2 で標準 v1.14 を検証**
-
-- [x] cp-2 を graceful reset でクラスターから外す（etcd が1メンバーに縮退する）
-- [x] Stage B と Stage C を実施する
-- [x] 結果をこのドキュメントに記録する
-
-2メンバーの etcd は quorum が 2 であり、どちらを再起動してもクラスターが止まる。
-cp-2 を先に外して1メンバーにしておけば、続く cp-1 のアップグレードで止まるのは cp-1 の再起動のあいだだけになる。
-
-**Phase 2：cp-1 を v1.14 で作り直す**
-
-当初は `talosctl upgrade` で talos-ufs から標準イメージへ乗り換える計画だった。
-Stage C でクリーンインストールが通ったこと、そしてコントロールプレーンを EliteDesk 800 G6 に置き換える以上、アップグレード経路を確かめる価値が下がったことから、作り直す方針に変えた。
-EliteDesk への移行のリハーサルにもなる。
-
-- [x] `talconfig.yaml` の `talosVersion` を `v1.14.0`、`kubernetesVersion` を `v1.37.0` にする
-- [x] cp-1 のインストーラーイメージを素の schematic に変える
-- [x] cp-2 のノード定義を削除する（`wipe: true` パッチもここで外れる）
-- [x] `talosctl reset --graceful=false --wipe-mode all` で cp-1 を消去する
-- [x] 標準 v1.14 の ISO から起動し、生成した machine config を適用する
-- [x] `talosctl bootstrap` でクラスターを起こす
-
-**結果（2026年9月6日）**
-
-| 項目 | 結果 |
-| --- | --- |
-| Node | `cp-1` が `Ready`、Kubernetes `v1.37.0` |
-| Talos | `v1.14.0`、カーネル `6.18.48-talos` |
-| EFI パーティション | 2.2GB。256GB の morty でも 128GB の jerry と同値 |
-| etcd | 3.7.1、リーダー、healthy |
-| VIP | cp-1 が保持。`kubectl` も VIP 経由で疎通 |
-
-`talsecret.sops.yaml` を変えていないため、etcd のメンバー ID は再構築前と同じ `dd7677abffb26e5f` のままで、既存の talosconfig と kubeconfig がそのまま使える。
-
-**talhelper は v1.14 の設定形式に対応している。**
-3.1.17 のリリースは Talos v1.14.0 より前だが、v1.14 で独立ドキュメントに移った設定を正しく生成する。
-
-| 設定 | v1.14 での行き先 |
-| --- | --- |
-| ホスト名 | `HostnameConfig` |
-| ネームサーバー | `ResolverConfig` |
-| `deviceSelector` | `LinkAliasConfig` |
-| 静的アドレスと経路 | `LinkConfig` |
-| VIP | `Layer2VIPConfig` |
-| インストール先とイメージ | `machine.install`（v1alpha1 のまま） |
-
-同じ設定を v1alpha1 と独立ドキュメントの両方に書くと、v1.14 は適用時に拒否する。
-手書きでパッチを当てるときは、どちらか一方に寄せる必要がある。
-
-**Phase 3：MS-03 を投入して2台体制**
-
-- [x] `talos/schematics/ms03-schematic.yaml` を作成する
-- [x] MS-03 を v1.14.0 で構築する（手順は「MS-03 のセットアップ」）
-- [x] worker-1 がクラスターに参加し Ready になる
-- [x] 既定の Flannel のまま、単純な Deployment と Service をデプロイして疎通を確認する
-
-`allowSchedulingOnControlPlanes` が `false` であるため、ワーカーがなければワークロードは動かない。
-この検証は、MS-03 がクラスターに参加したこと自体の確認を兼ねる。
-
-CNI を Cilium に差し替えるのはフェーズ2の課題として分離する。
-ここで同時に入れると、Pod が動かなかったときに MS-03 側の問題か CNI 側の問題かを切り分けられなくなる。
-
-**結果（2026年9月6日）**
-
-| 項目 | 結果 |
-| --- | --- |
-| Node | `worker-1` が `Ready`、Kubernetes `v1.37.0`、Talos `v1.14.0` |
-| インストール先 | `/dev/nvme0n1`（SKHynix HFS256GDE9X081N 256GB）。EFI は cp-1 と同じ 2.2GB |
-| 拡張 | `intel-ucode` 20260812、`xe`、`intel-npu`、`iscsi-tools` v0.2.0、`util-linux-tools` 2.42.2 の5つがロード。schematic ID も一致 |
-| カーネル引数 | `iommu=pt` が反映 |
-| Pod の配置 | nginx 2レプリカが両方とも worker-1 に載った。cp-1 の control-plane taint が効いている |
-| Service | ClusterIP 経由で `HTTP 200`。Endpoints に2つの Pod IP |
-
-**MS-03 の NIC は4つとも認識された。**
-
-| インターフェース | ドライバ | Vendor:Device | チップ |
-| --- | --- | --- | --- |
-| `eno2` | `igc` | 8086:125b | Intel i226-LM 2.5GbE |
-| `eno3` | `r8169` | 10ec:8127 | Realtek RTL8127 10GbE RJ-45 |
-| `eno4np0` | `i40e` | 8086:1572 | Intel X710 SFP+ #1 |
-| `eno5np1` | `i40e` | 8086:1572 | Intel X710 SFP+ #2 |
-
-RTL8127 が認識されなかった場合の退避先を用意しておくという懸念は、解消した。
-`r8169` がデバイスを掴んでおり、リンクが down なのはケーブルが挿さっていないためである。
-
-現在の接続は X710 の SFP+ #1（`port: DirectAttach`）で、`192.168.20.41` はこのポートに載せている。
-`talconfig.yaml` の `deviceSelector` は MAC で固定した。4つとも同じ OUI の連番であり、名前の対応が起動順で入れ替わりうるためである。
-
-**iGPU は使えるが、NPU はドライバの初期化に失敗する。**
-
-特権 Pod から `/dev/dri` を確認すると `card0` と `renderD128` があり、`xe` 拡張が Xe3 の DRM デバイスを提供している。
-
-一方 `/dev/accel` は存在しない。
-PCI デバイスとしては `0000:00:0b.0` に Panther Lake NPU が見えており、`intel_vpu` モジュールも `live` でロードされている。
-それでも probe が `-EIO` で失敗する。
-
-```
-intel_vpu 0000:00:0b.0: [drm] *ERROR* ivpu_hw_ip_host_ss_configure(): Failed qreqn check: -5
-intel_vpu 0000:00:0b.0: [drm] *ERROR* ivpu_hw_power_up(): Failed to configure host SS: -5
-intel_vpu 0000:00:0b.0: probe with driver intel_vpu failed with error -5
-```
-
-Linux 6.18 の `intel_vpu` が Panther Lake 世代の NPU を扱いきれていないと考えられる。
-NPU を使うワークロードは初期スコープ外であり、この時点では支障にならない。
-使う段になったら、カーネルの更新か BIOS 設定を確認する。
-
-MS-03 の ISO 作成からメンテナンスモードでの NIC とディスクの確認までは、Phase 1 および Phase 2 と並行して進められる。
-
-### v1.14 で変わった点のうち、この構成に効くもの
-
-| 変更 | 影響 |
-| --- | --- |
-| `ghcr.io/siderolabs/installer` がリリースで公開されなくなった | 標準 Talos を使う場合も Image Factory 経由のインストーラーイメージが要る。`talosctl gen config` の既定値が素の schematic（`376567...`）を指す `factory.talos.dev/metal-installer/376567...:v1.14.0` になっており、`--install-disk` も `/dev/sda`、`--kubernetes-version` も `1.37.0` が既定である。`factory.talos.dev/installer/` の旧パスも 200 を返すが、生成される正規のパスは `metal-installer` である |
-| etcd が 3.7.1 になり、`/metrics` などの HTTP エンドポイントが 2383 に移動 | `listen-metrics-urls` を明示している場合は移動しない。フェーズ1のスクリプトが使う 2381 はそのまま効く |
-| Kubernetes の既定が 1.37.0 | `kubernetesVersion` を v1.36.2 から上げる |
-| `LoadedKernelModule` が非推奨、`KernelModuleStatus` を追加 | モジュールのロード確認は新しいリソースを使う |
-| Linux が 6.18.44 から 6.18.48 へ | どちらも 6.18 系であり、MS-03 の RTL8127 に対する見込みは変わらない |
+| `siderolabs/intel-ucode` | 採用 | Comet Lake のマイクロコード。入れない理由がない |
+| `siderolabs/i915` | 見送り | ワークロードを載せないため iGPU 自体が要らない |
+| `siderolabs/intel-npu` | 見送り | NPU を持たない |
+| `siderolabs/iscsi-tools` | 見送り | Longhorn をワーカーに限定するため、コントロールプレーンで iSCSI を使う場面がない |
+| `siderolabs/util-linux-tools` | 見送り | `iscsi-tools` と組で使うものであり、単独では要らない |
+| `iommu=pt` | 見送り | SR-IOV も PCIe パススルーも使わない |
+
+etcd のバックアップは `talosctl etcd snapshot` で行う。
+このコマンドはノードから実行元へスナップショットをストリームするだけで、ノードは外部ストレージをマウントしない。
+バックアップを理由に `iscsi-tools` が要ることはない。
+
+**拡張を後から足すことはできる。**
+`talosctl upgrade` とインストーラーイメージの差し替えで再起動が要るが、コントロールプレーン3台なら1台ずつローリングで上げられる。
+MS-03 で必要になりうる拡張を最初に焼き込んだのは、ワーカーが1台しかなく再起動がワークロード停止に直結したためである。
+3台構成のコントロールプレーンにはその制約がない。
 
 ## MS-03 のセットアップ
 
-MS-03 はワーカーノードとして確実に稼働させる。
-コントロールプレーンの機種判定に依存しないため、フェーズ1と並行して本番構成のまま構築する。
-成果物は Step 3 の worker-1 としてそのまま投入する。
+MS-03 はワーカーノード `worker-1`（`192.168.20.41`）として稼働している。
 
 Talos ではシステム拡張を後から足すのに `talosctl upgrade` とインストーラーイメージの差し替えが要る。
 拡張を足すたびに再起動が発生するため、必要になりうる拡張は最初の ISO に焼き込む。
@@ -885,15 +294,28 @@ Talos ではシステム拡張を後から足すのに `talosctl upgrade` とイ
 | NIC | Realtek RTL8127 10GbE RJ-45 | `r8169`（`CONFIG_R8169=m`） |
 | NIC | Intel i226-LM 2.5GbE RJ-45 | `igc`（`CONFIG_IGC=m`） |
 | 拡張スロット | PCIe x8、U.2 | 初期スコープ外 |
+| ストレージ | NVMe SKHynix HFS256GDE9X081N 256GB | インストール先 `/dev/nvme0n1` |
 
-Talos v1.14.0 のカーネルは Linux 6.18.48 である（v1.13.9 は 6.18.44）。
-RTL8127 のメインライン対応は 6.15 で `r8169` に入り、6.18 でシャットダウン時のハング修正が加わっている。
-バージョン上は動作するはずだが、対応が入って日が浅い。
+**NIC は4つとも Talos が認識する。**
+インターフェース名は起動順で入れ替わりうるため、`deviceSelector` は MAC で指定する。
 
-トポロジ図では MS-03 を USW-Pro-XG-10-PoE の RJ-45 ポートに接続する想定になっており、この経路は RTL8127 に依存する。
-実機で認識しなかった場合の退避先を用意しておく。
-X710（SFP+）は i40e で長く枯れているため確実だが、USW-Pro-XG-10-PoE の SFP28 ポートは2口しかなく、うち1口は UCG-Fiber への上流で埋まる。
-暫定策として i226-LM の 2.5GbE で運用を始める手もある。
+| インターフェース | MAC | ドライバ | Vendor:Device | チップ |
+| --- | --- | --- | --- | --- |
+| `eno2` | `38:05:25:3b:cc:d2` | `igc` | 8086:125b | Intel i226-LM 2.5GbE |
+| `eno3` | `38:05:25:3b:cc:d5` | `r8169` | 10ec:8127 | Realtek RTL8127 10GbE RJ-45 |
+| `eno4np0` | `38:05:25:3b:cc:d3` | `i40e` | 8086:1572 | Intel X710 SFP+ #1 |
+| `eno5np1` | `38:05:25:3b:cc:d4` | `i40e` | 8086:1572 | Intel X710 SFP+ #2 |
+
+現在は X710 の SFP+ #1 に DAC 直結し、10GbE でリンクしている。
+トポロジ図では USW-Pro-XG-10-PoE の RJ-45 ポートに接続する想定であり、この経路は RTL8127 に依存する。
+どちらを本設置で使うかは配線とあわせて決める。
+USW-Pro-XG-10-PoE の SFP28 ポートは2口しかなく、うち1口は UCG-Fiber への上流で埋まる。
+
+**iGPU は使えるが、NPU は使えない。**
+`xe` 拡張により `/dev/dri` に `card0` と `renderD128` が現れる。
+NPU は PCI デバイスとして見えており `intel_vpu` もロードされるが、probe が `-EIO` で失敗し `/dev/accel` が作られない。
+Linux 6.18 のドライバが Panther Lake 世代を扱いきれていないと見ている。
+NPU を使うワークロードは初期スコープ外のため、当面は支障にならない。
 
 ### ISO の作成
 
@@ -950,8 +372,8 @@ schematic を変更したら ID もこのドキュメントで更新する。
 | `siderolabs/intel-ucode` | 採用 | Panther Lake のマイクロコード |
 | `siderolabs/xe` | 採用 | Xe3 iGPU の DRM ドライバ。`i915` は旧世代向けなので不要 |
 | `siderolabs/intel-npu` | 採用 | Panther Lake 内蔵 NPU のファームウェアとカーネルモジュール。`xe` と同じく、後から足すと `talosctl upgrade` と再起動が要るため最初に含める |
-| `siderolabs/iscsi-tools` | 採用 | democratic-csi の Synology 向けドライバは iSCSI のみ。将来使う可能性に備える |
-| `siderolabs/util-linux-tools` | 採用 | iscsi-tools と組で使う |
+| `siderolabs/iscsi-tools` | 採用 | Longhorn の前提条件。ボリュームのアタッチに `iscsid` と `iscsiadm` を使う |
+| `siderolabs/util-linux-tools` | 採用 | Longhorn の前提条件。ボリュームの trim に `fstrim` を使う |
 | `siderolabs/nfs-utils` | **見送り** | この拡張が提供するのは rpcbind と rpc.statd であり、NFSv3 のファイルロック専用である。NFS クライアント自体は Talos のカーネルに組み込まれており v4.2 まで対応済み（`CONFIG_NFS_V4_2=y`）。NFSv4 を使う限り不要 |
 | `intel_iommu=on` | **削除** | Talos のカーネルは `CONFIG_INTEL_IOMMU_DEFAULT_ON=y` で、指定しても挙動が変わらない |
 | `iommu=pt` | 維持 | `CONFIG_IOMMU_DEFAULT_PASSTHROUGH` は未設定のため、指定に意味がある。X710 の SR-IOV や将来の PCIe パススルーで効く |
@@ -977,7 +399,7 @@ CIFS は Talos のカーネルに組み込まれている（`CONFIG_CIFS=y`）�
 | 写真、動画などの大容量メディア | 使える | 読み取りが主体でファイルロックに依存しない。既存の SMB 運用をそのまま流用できる |
 | データベース、アプリケーションの状態 | 使えない | POSIX のロックが期待どおりに効かず、SQLite や PostgreSQL でデータ破損の危険がある |
 
-データベースとアプリケーションの状態は、もともと OpenEBS Local PV（MS-03 の NVMe）に置く計画である。
+データベースとアプリケーションの状態はワーカーのローカルディスクに置く。
 SMB の制約は残る用途に当たらないため、**DS923+ の SMB 運用は維持できる**。
 
 `plan_old.md` の記述を1点訂正する。
@@ -987,97 +409,321 @@ SMB を使う場合は democratic-csi ではなく `csi-driver-smb` を使う。
 | 層 | ドライバ | バックエンド | 必要な拡張 |
 | --- | --- | --- | --- |
 | メディア（大容量、共有） | `csi-driver-smb` | DS923+ の SMB 共有 | なし（`mount.cifs` はドライバ Pod 内で動く） |
-| DB、アプリ状態（高速） | OpenEBS Local PV | MS-03 の NVMe | なし |
-| ブロック（必要になった場合） | democratic-csi `synology-iscsi` | DS923+ の LUN | `iscsi-tools`、`util-linux-tools` |
+| ブロック（DB、アプリ状態） | Longhorn | ワーカーのローカルディスク | `iscsi-tools`、`util-linux-tools` |
 
-### バージョンの整合
+**Longhorn はワーカーにのみ展開する。**
+コントロールプレーンには taint があってワークロードが載らないため、そこにレプリカを置く意味がない。
+DaemonSet が control-plane の taint を許容しないよう設定し、コントロールプレーンの schematic には `iscsi-tools` を含めない。
 
-同じクラスターのノードであるため、Talos のバージョンを揃える必要がある。
-採用するのは v1.14.0 である（2026年9月3日リリース、上流の最新安定版）。
+Longhorn は DS923+ の LUN に iSCSI で繋ぐためのものではない。
+ボリュームをノードにアタッチする際に Longhorn 自身がイニシエータとターゲットの役割を果たすため、ノードに `iscsid` と `iscsiadm` が要る。
+`util-linux-tools` はボリュームの trim に使う `fstrim` のために要る。
+どちらも Longhorn の Talos 向けドキュメントが前提条件として挙げているものである。
 
-cp-2 での検証が通ったため、全ノードのイメージが Image Factory に揃う。
+Longhorn は namespace に `pod-security.kubernetes.io/enforce=privileged` を要求する。
+Talos は既定で `baseline` を強制するため、この設定を入れないと動かない。
 
-| ノード | インストーラーイメージ |
-| --- | --- |
-| S100-WLP | `factory.talos.dev/metal-installer/376567988ad370138ad8b2698212367b8edcb69b5fd68c80be1f2ec7d603b4ba:v1.14.0`（素の schematic） |
-| MS-03 | `factory.talos.dev/metal-installer/b7f363548fe975dbb10e85983906f0c3f44ab3804b6246b677508ca1bb20d1f4:v1.14.0` |
-| EliteDesk 800 G6 | 未定。拡張の要否を決めてから schematic を作る |
+### 残っている作業
 
-イメージが1系統に揃うため、talos-ufs の公開待ちにバージョンを縛られる制約も、2系統を Renovate で追ってずれる問題もなくなった。
-
-`talosctl gen config` の既定値が素の schematic を指しているため、拡張が要らないノードでは `--install-image` を明示する必要すらない。
-
-### 手順
-
-- [x] `talos/schematics/ms03-schematic.yaml` を作成する
-- [x] Image Factory に POST し、schematic ID をリポジトリに記録する
-- [x] ISO をダウンロードして USB に書き込む
-- [x] Secure Boot を無効化して起動し、メンテナンスモードに入る
-- [x] `talosctl get links --insecure` で4つの NIC が見えることを確認する（X710 x2、RTL8127、i226-LM）
-- [x] RTL8127 が認識されない場合の接続方法を決める（認識されたため不要。現在は X710 の SFP+ に DAC 直結）
-- [x] `talosctl get disks --insecure` で NVMe を確認し、インストール先を決める
-- [x] talhelper で machine config を生成し、`192.168.20.41` を固定で割り当てて適用する
-- [x] `talosctl get extensions` で5つの拡張がロードされていることを確認する
-- [x] 特権 Pod から `/dev/dri` を確認し、Xe3 の DRI デバイスが出ることを確認する
-- [x] 同じく `/dev/accel` を確認する（NPU は probe が `-EIO` で失敗し、デバイスは出ない）
-- [ ] 10GbE で DS923+ との実効スループットを測る
-
-結果は「Talos v1.14 への移行と talos-ufs の存廃」の Phase 3 に記録した。
-
-セットアップ時に2点つまずいた。
-
-**MS-03 を挿したポートが VLAN 20 になっていなかった。**
-DHCP でデフォルト LAN の `192.168.1.116` を取得し、その状態でノード側に `192.168.20.41` を静的設定しても届かない構成になっていた。
-UCG-Fiber 側でポートに VLAN 20 を割り当てて解消した。
-検証構成には「UCG-Fiber の LAN ポートに直結する」としか書いておらず、どのポートを VLAN 20 にしたかを記録していなかったことが原因である。
-EliteDesk 3台を挿すときに同じ手間を踏まないよう、ポートの割り当ても記録する。
-
-**PodSecurity が特権 Pod を拒否する。**
-Talos は Pod Security Admission を既定で有効にしており、`default` namespace では `baseline` が強制される。
-`/dev/dri` の確認のような特権 Pod を動かすには、`pod-security.kubernetes.io/enforce=privileged` を付けた namespace を別に作る必要がある。
+MS-03 固有の残作業は「TODO」節にまとめてある。
 
 Intel Quick Sync と NPU を使うワークロードは初期スコープ外である。
 それでも `xe` と `intel-npu` を最初の ISO に含めるのは、後から拡張を足すと `talosctl upgrade` と再起動が要るためである。
 カーネルモジュールとファームウェアは拡張が用意するが、コンテナからアクセラレータを使うためのユーザー空間は別途要る。
 Intel Device Plugin が `xe` と NPU のデバイスをどう公開するかは、実際に使う段階で確認する。
 
-## フェーズ2以降: 本構築
+## 構築のフェーズ
 
-フェーズ1の判定結果に依存するため、方針と決定待ち事項の整理に留める。
+ハードウェアは3段階で揃える。
+コスト、設置スペース、ネットワーク機器の空きポートによる制約である。
+
+| | コントロールプレーン | ワーカー | etcd メンバー | Longhorn レプリカ |
+| --- | --- | --- | --- | --- |
+| フェーズ1 | EliteDesk x1 | MS-03 x1 | 1 | 1 |
+| フェーズ2 | EliteDesk x3 | MS-03 x1、S100-WLP x1 | 3 | 2 |
+| フェーズ3 | EliteDesk x3 | MS-03 x2 | 3 | 2 |
+
+フェーズ2の S100-WLP は、2台目の MS-03 を調達するまでのつなぎである。
+フェーズ3で MS-03 に置き換わり、S100-WLP はクラスターから外れる。
+
+**ソフトウェアの構成はフェーズをまたいで変えない。**
+CNI も CSI もフェーズ1から最終形のものを入れる。
+後から差し替えると PV の作り直しやデータ移送が発生するためであり、フェーズ間で変わるのは台数と、それに伴うレプリカ数だけにする。
+
+### フェーズごとに変わること
+
+**etcd のメンバー数**はフェーズ1で 1、フェーズ2以降で 3 になる。
+フェーズ1でコントロールプレーンが落ちると API が使えなくなるが、ワーカー上で動いている Pod は動き続ける。
+
+**Longhorn のレプリカ数**は 1、2、2 と推移する。
+フェーズ2で S100-WLP を1台に留めるのは、この推移を単調にするためである。
+2台入れてレプリカを 3 まで上げると、フェーズ3で 2 に落とす際にレプリカを削る操作が要る。
+
+フェーズ2からフェーズ3への移行では、先に MS-03 の2台目を投入してワーカーを一時的に3台にする。
+そのうえで S100-WLP のレプリカを退避させてから外せば、レプリカ数 2 を保ったまま入れ替えられる。
+
+### フェーズごとの作業
+
+**フェーズ1**
+
+- [ ] EliteDesk 800 G6 を1台、`cp-1` として構築する
+- [ ] MS-03 を `worker-1` として再投入する
+- [ ] 「フェーズ1で入れるコンポーネント」を一式入れる
+- [ ] Pi-hole を移設し、クラスター外の副 DNS を用意する
+- [ ] UCG-Fiber に FRR の BGP 設定を入れる
+
+**フェーズ2**
+
+- [ ] EliteDesk を2台追加し、etcd を3メンバーにする
+- [ ] S100-WLP 用のワーカー schematic を作る（`iscsi-tools`、`util-linux-tools`）
+- [ ] S100-WLP を1台、ワーカーとして投入する
+- [ ] Longhorn のレプリカ数を 2 に上げる
+
+**フェーズ3**
+
+- [ ] MS-03 の2台目を投入する（ワーカーが一時的に3台になる）
+- [ ] S100-WLP から Longhorn のレプリカを退避させる
+- [ ] S100-WLP をクラスターから外す
+
+### フェーズ1の可用性について
+
+フェーズ1はワーカーが MS-03 1台だけであり、Longhorn のレプリカも1つである。
+このノードが落ちれば、その上のワークロードとボリュームは復旧まで到達できない。
+
+家庭の DNS を担う Pi-hole をフェーズ1でクラスターに載せるため、**クラスター外に副の DNS を用意することが前提条件になる**。
+UCG-Fiber 自身の DNS を副として配るか、別途 Backup DNS を立てる。
+これはクラスターの構築対象外として扱う。
+
+## リハーサル
+
+EliteDesk 800 G6 の到着を待つあいだ、S100-WLP + MS-03 のクラスターでフェーズ1の構成を通す。
+目的は手順とハマりどころを洗い出すことであり、成果物は `knowledge/` に残す。
+
+R1 から R3 までで、**この構成の落とし穴は2つとも Cilium 側にあった**ことが分かっている。
+`bpf.autoMount.enabled` を無効にすると `cilium-envoy` から BPF マップが見えなくなる件と、Gateway API の CRD が experimental チャネルを要求する件である。
+どちらも [knowledge/talos-operations.md](knowledge/talos-operations.md) に記録した。
+
+クラスター名とノード名は現状のまま（`homelab`、`cp-1`、`worker-1`）で進める。
+命名規約は手順4で整理するため、ここでは触らない。
+
+**検証したことは、通るたびに `knowledge/` へ書き出す。**
+セッションが切れても再開できるよう、チェックボックスと記録を対にして進める。
+
+### 検証項目
+
+- [x] **R1: `cni: none` と kube-proxy 無効でクラスターを作る**（2026年9月6日 完了）
+- [x] **R2: Cilium を kube-proxy 置換・L7 proxy 有効で入れる**（2026年9月6日 完了）
+- [x] **R3: Cilium の Gateway API と LB IPAM**（2026年9月6日 完了）
+- [ ] **R4: Cilium BGP を UCG-Fiber と対向させる**（UCG-Fiber 側の FRR 設定が要る）
+- [ ] **R5: Longhorn をワーカーにのみ展開する**（レプリカ1）
+- [ ] **R6: Flux Operator と SOPS**
+- [ ] **R7: cert-manager、Cloudflare Tunnel、external-dns**（ドメインと Cloudflare の API トークンが要る）
+
+R1 から R3 が山場である。
+ここが通れば残りは積み上げになる。
+
+### R1 で変える設定
+
+`talconfig.yaml` に次を足す。
+
+```yaml
+cniConfig:
+  name: none
+```
+
+コントロールプレーンのパッチに次を足す。
+
+```yaml
+cluster:
+  proxy:
+    disabled: true
+```
+
+**これはクラスター構築時に効く設定である。**
+後から変えるとノードの作り直しになるため、リハーサルで手順を固めておく価値がある。
+
+**R1 の結果（2026年9月6日）**
+
+| 確認項目 | 結果 |
+| --- | --- |
+| 両ノードの状態 | `NotReady`。理由は `cni plugin not initialized` |
+| DaemonSet | `No resources found`。kube-proxy が作られていない |
+| CoreDNS | `Pending`。Pod ネットワークがないため |
+| コントロールプレーンの静的 Pod | `Running`。ホストネットワークで動くため CNI 不要 |
+| etcd | 3.7.1、リーダー、healthy |
+| VIP | cp-1 が保持し、`kubectl` も VIP 経由で応答 |
+
+途中で v1alpha1 の `cluster.proxy.disabled` を書いて生成に失敗した。
+正解は `KubeProxyConfig` ドキュメントの `enabled: false` である。
+詳細は [knowledge/talos-operations.md](knowledge/talos-operations.md) に記した。
+
+### R2 で要る Cilium の設定
+
+Talos は Cilium に対して固有の前提を持つ。
+公式ガイド（Deploy Cilium CNI）が挙げているものと、kube-proxy 不在への対応をまとめる。
+
+| 設定 | 値 | 理由 |
+| --- | --- | --- |
+| `ipam.mode` | `kubernetes` | Talos の要求 |
+| `kubeProxyReplacement` | `true` | kube-proxy を置換する |
+| `l7Proxy` | `true` | Gateway API の前提条件 |
+| `k8sServiceHost` | `127.0.0.1` | KubePrism 経由で API に到達する |
+| `k8sServicePort` | `7445` | 同上 |
+| `cgroup.autoMount.enabled` | `false` | Talos が既に cgroupv2 を提供している |
+| `bpf.autoMount.enabled` | `false` | Talos が既に bpffs を提供している |
+| `securityContext.capabilities` | `SYS_MODULE` を除く | Talos はワークロードにカーネルモジュールのロードを許さない |
+
+**`k8sServiceHost` には KubePrism を使う。**
+KubePrism は Talos が各ノードの `127.0.0.1:7445` で提供する API プロキシで、コントロールプレーンが増えても追従する。
+実 IP を直書きするとフェーズ2で3台に増やしたときに書き換えが要るため、こちらが適する。
+`machine.features.kubePrism` は既定で有効であり、`KubePrismStatus` リソースで healthy を確認できる。
+
+導入はまず `helm install` で最小構成を通し、動作を確認してから helmfile に落とす。
+失敗したときに Cilium の問題か helmfile の問題かを切り分けるためである。
+
+**R2 の結果（2026年9月6日、Cilium v1.20.1）**
+
+| 確認項目 | 結果 |
+| --- | --- |
+| Node の状態 | 両ノードとも `Ready` |
+| `KubeProxyReplacement` | `True`（Direct Routing） |
+| Cilium の健全性 | `Modules Health: OK(75)`、`Controller Status: 13/13 healthy` |
+| cilium-envoy | 両ノードで Running（`l7Proxy` が効いている） |
+| ClusterIP 経由の疎通 | `HTTP 200` |
+| CoreDNS の名前解決 | `nginx.default.svc.cluster.local` を解決 |
+| kube-proxy | 不在のまま |
+
+Service の負荷分散を Cilium の eBPF が肩代わりしていることを、kube-proxy 不在の状態で実証した。
+
+### R3 で足すもの
+
+Gateway API の CRD は **experimental チャネル**の v1.6.1 を使う。
+Cilium は `tlsroutes` と `backendtlspolicies` を含む7種を必須として要求し、`tlsroutes` は standard チャネルに存在しない。
+
+`CiliumLoadBalancerIPPool` と `CiliumL2AnnouncementPolicy` は `bootstrap/cilium-networks.yaml` に置く。
+プールは `192.168.20.200-250` で、これは「VLAN 20 のアドレス割り当て」で確保した帯である。
+L2 Announcement は R4 で BGP に移すまでの確認用であり、ワーカーのみが広告するよう `nodeSelector` を付けている。
+
+**R3 の結果（2026年9月6日）**
+
+| 確認項目 | 結果 |
+| --- | --- |
+| `GatewayClass` | `ACCEPTED: True`（`io.cilium/gateway-controller`） |
+| `Gateway` | `PROGRAMMED: True`、アドレス `192.168.20.200` |
+| LB IPAM | プールから払い出し。51 IP 利用可能 |
+| L2 Announcement | VLAN 20 の外にいる作業端末から到達 |
+| nginx への疎通 | 連続5回すべて `HTTP 200` |
+
+**2箇所でつまずいた。**
+CRD をどのチャネルで入れるかと、`bpf.autoMount.enabled` を無効にすると `cilium-envoy` から BPF マップが見えなくなる件である。
+後者は CNI としての疎通が正常なまま Gateway だけが 500 を返すため、Gateway API を入れるまで気付けない。
+詳細は [knowledge/talos-operations.md](knowledge/talos-operations.md) に記した。
+
+## 現在のクラスター
+
+コントロールプレーンを EliteDesk 800 G6 に置き換えるまでの暫定構成である。
+
+| ノード | 機器 | アドレス | 役割 |
+| --- | --- | --- | --- |
+| cp-1 | S100-WLP（morty） | 192.168.20.31 | コントロールプレーン |
+| worker-1 | MS-03 | 192.168.20.41 | ワーカー |
+| VIP | — | 192.168.20.100 | Kubernetes API エンドポイント |
+
+Talos は v1.14.0、Kubernetes は v1.37.0。
+CNI は Talos 既定の Flannel で、`allowSchedulingOnControlPlanes` は `false` にしてある。
+
+cp-1 は USB Ethernet ドングル（`r8152`、MAC `6c:1f:f7:d3:99:42`）で接続している。
+S100-WLP は3台のうち2台の内蔵 I226-V に物理層障害があり、そのための回避策である。
+
+## 本構築
 
 ### 確定している方針
 
 - **OS**：Talos Linux。設定管理は talhelper（`talconfig.yaml`）
 - **コントロールプレーンの機種**：HP EliteDesk 800 G6 を3台。S100-WLP からの置き換えを数日中に行う
-- **コントロールプレーンのイメージ**：標準 Talos を Image Factory の schematic で使う。EliteDesk 800 G6 は SATA と NVMe であり、UFS の制約を受けない
-- **GitOps**：Flux v2。main ブランチへのマージをトリガーに反映する
+- **コントロールプレーンのイメージ**：標準 Talos を Image Factory の schematic で使う。拡張は `intel-ucode` のみ
+- **CNI**：Cilium。kube-proxy を完全に置換し、eBPF モードで動かす。フェーズ1から入れる
+- **Ingress**：Cilium の Gateway API 実装を使う。Ingress API の後継が Gateway API であり、Cilium が Core conformance を全通過しているため、専用の Ingress コントローラーを足さない。前提として `kubeProxyReplacement=true` と `l7Proxy=true` が要る
+- **外部公開**：Cloudflare Tunnel。ルーターのポートを開けない
+- **GitOps**：Flux v2。Flux Operator と FluxInstance で管理する。main ブランチへのマージをトリガーに反映する
+- **CI/CD**：Flux の Webhook Receiver を使う。GitHub Actions はクラスターに触らない。push イベントを Cloudflare Tunnel 経由で受け、Flux が即座に Git を pull する。CI 側の仕事はマニフェストの検証と Renovate による更新 PR に限る
+- **内部の名前解決**：external-dns の Pi-hole プロバイダーで、クラスターのホスト名を Pi-hole の Custom DNS に書き込む。DNS サーバーを別途立てない
 - **ツール管理**：mise。ローカル環境の再現性を確保する
 - **シークレット管理**：SOPS + age。暗号化済み Secret を Git にコミットする
 - **リポジトリ構成**：`onedr0p/cluster-template` に準拠する
 - **証明書**：cert-manager + Let's Encrypt。DNS-01 チャレンジに Cloudflare を使う
 - **ワーカーノード**：MS-03。標準 Talos を Image Factory の schematic でカスタムして使う。2台目の MS-03 を調達するまでのつなぎに S100-WLP をワーカーに回す場合も、標準 Talos で動くことを確認済みである
 - **Talos のバージョン**：全ノードを v1.14.0 に揃える。Kubernetes は v1.37.0
-- **ストレージ**：大容量メディアは `csi-driver-smb` で DS923+ の SMB 共有へ。データベースとアプリケーションの状態は OpenEBS Local PV で MS-03 の NVMe へ
+- **ストレージ**：大容量メディアは `csi-driver-smb` で DS923+ の SMB 共有へ。データベースとアプリケーションの状態は Longhorn でワーカーのローカルディスクへ。Longhorn はワーカーにのみ展開し、フェーズ1から入れる
+- **LoadBalancer**：Cilium BGP。UCG-Fiber は UniFi OS 4.1.13 以降で BGP に対応しており、FRR 形式の設定ファイルをアップロードして構成する（Settings → Routing → BGP）
+
+### フェーズ1で入れるコンポーネント
+
+| namespace | コンポーネント | 役割 |
+| --- | --- | --- |
+| kube-system | cilium | CNI、kube-proxy 置換、L7 proxy、BGP、Gateway API |
+| kube-system | coredns | クラスター内 DNS |
+| kube-system | metrics-server | `kubectl top`、HPA |
+| cert-manager | cert-manager | Let's Encrypt、DNS-01 チャレンジに Cloudflare |
+| flux-system | flux-operator、flux-instance | GitOps と Webhook Receiver |
+| network | cloudflare-tunnel | 外部公開 |
+| network | external-dns（Cloudflare） | 公開 DNS レコード |
+| network | external-dns（Pi-hole） | 内部 DNS レコード |
+| longhorn-system | longhorn | ブロックストレージ |
+| （未定） | pi-hole | 宅内 DNS |
+
+**採用しないもの**：`kube-vip`、`envoy-gateway`、`traefik`、`k8s-gateway`、`spegel`、`reloader`
+
+`onedr0p/cluster-template` はこれらを含むが、いずれも既に入るコンポーネントで代替できるか、この規模では要らない。
+判断の根拠は [knowledge/cluster-template-evaluation.md](knowledge/cluster-template-evaluation.md) に記す。
+
+### TODO
+
+構築の本筋から外れるが、いずれ回収する項目である。
+
+- [ ] **Pi-hole の冗長化**：クラスター内の Pi-hole を primary、Raspberry Pi 3 を replica として `nebula-sync` で設定を同期する。Pi-hole v6 では Gravity Sync も Orbital Sync も動かず、`nebula-sync` が現行の解になる。両方が v6 である必要がある。external-dns が書く Custom DNS のレコードを同期対象に含めるかは、意図を持って決める
+- [ ] **10GbE で DS923+ との実効スループットを測る**：DS923+ を VLAN 20 に載せてから
+- [ ] **MS-03 の本設置時の接続 NIC を決める**：X710 の SFP+ か RTL8127 の RJ-45 か。配線とあわせて決める
+- [ ] **スイッチポートの VLAN 割り当てを記録する**：どのポートを VLAN 20 にしたかの記録がなく、MS-03 の投入時に一度つまずいた
+- [ ] **EliteDesk のストレージが NVMe か SATA かを確認する**：実機が届いてから
+- [ ] **MS-03 の NPU**：`intel_vpu` の probe が `-EIO` で失敗する。使う段になったらカーネルの更新か BIOS 設定を確認する
+
+### バージョンとイメージの整合
+
+同じクラスターのノードであるため、Talos のバージョンを揃える。
+採用するのは v1.14.0 である（2026年9月3日リリース、上流の最新安定版）。
+
+全ノードのイメージを Image Factory に揃える。
+
+| ノード | インストーラーイメージ | 拡張 |
+| --- | --- | --- |
+| EliteDesk 800 G6 | `factory.talos.dev/metal-installer/2d61dd07b20062062ea671b4d01873506103b67c0f7a4c3fb6cf4ee85585dcb8:v1.14.0` | `intel-ucode` |
+| MS-03 | `factory.talos.dev/metal-installer/b7f363548fe975dbb10e85983906f0c3f44ab3804b6246b677508ca1bb20d1f4:v1.14.0` | `intel-ucode`、`xe`、`intel-npu`、`iscsi-tools`、`util-linux-tools` |
+| S100-WLP | `factory.talos.dev/metal-installer/376567988ad370138ad8b2698212367b8edcb69b5fd68c80be1f2ec7d603b4ba:v1.14.0` | なし（素の schematic） |
+
+S100-WLP をワーカーに回す場合は、Longhorn の前提条件を満たすために `iscsi-tools` と `util-linux-tools` を含む schematic に差し替える必要がある。
+
+イメージが1系統に揃うため、Renovate で追跡先が分かれてバージョンがずれる問題は起きない。
+
+`talosctl gen config` の既定値が素の schematic を指しているため、拡張が要らないノードでは `--install-image` を明示する必要すらない。
 
 ### 決定待ち事項
 
-| 項目 | 選択肢 | 依存する検証 |
+| 項目 | 選択肢 | 状況 |
 | --- | --- | --- |
-| S100-WLP 3台の行き先 | ワーカーとして使う / 退役させる | 2台目の MS-03 の調達時期。標準 Talos で動くことは検証済みのため、技術的な障害はない |
-| Pi-hole の移設先 | Kubernetes 上 / 別ハードウェア | 未着手 |
-| CNI | Cilium（kube-proxy 完全置換、eBPF モード） | ノード構成の確定後 |
-| LoadBalancer | Cilium L2 Announcement（Pool: 192.168.20.200-250） | VLAN 20 確定済みのため着手可能 |
-| Ingress | Traefik | CNI の稼働後 |
-| MS-03 の接続 NIC | RTL8127（10G RJ-45）/ X710（SFP+） | 4つとも認識済みで技術的な制約はない。現在は X710 の SFP+ に DAC 直結。USW-Pro-XG-10-PoE の SFP28 は2口で1口が上流に埋まるため、本設置時に配線から決める |
-| 監視 | kube-prometheus-stack | フェーズ1でも簡易構成が必要 |
+| フェーズ2で使う S100-WLP の個体 | morty / jerry / rick | Pi-hole がフェーズ1でクラスターに移るため、3台とも候補になる。容量とストレージ特性で選ぶ |
+| S100-WLP 用のワーカー schematic | 未作成 | Longhorn の前提条件を満たすため `iscsi-tools` と `util-linux-tools` を含める |
+| Ingress | Traefik / Cilium Gateway API | Cilium の稼働後 |
+| BGP の ASN 設計 | クラスター側と UCG-Fiber 側の AS 番号 | プライベート ASN から選ぶ |
+| MS-03 の接続 NIC | RTL8127（10G RJ-45）/ X710（SFP+） | 4つとも認識済み。本設置時に配線とあわせて決める |
+| 監視 | kube-prometheus-stack | 未着手 |
 | バックアップ | Git リポジトリ + DS923+ のスナップショット | 未着手 |
 | Intel Quick Sync のパススルー | Intel Device Plugin | 初期スコープ外 |
 | UniFi Protect の録画先 | UNVR / DS923+ / Kubernetes 上の NVR | 未着手 |
 
 ## リファレンス
 
+- [knowledge/](knowledge/)：検証の記録と Talos の運用知見
 - `plan_old.md`：前バージョンの計画。本構築フェーズの実装タスク案が残っている
 - `physical-network-topology-plan.svg`：物理トポロジ図（将来導入する機器を含む）
-- `/Users/ryoma/Documents/GitHub/talos-ufs/CLAUDE.md`：talos-ufs のビルド構成
 - https://github.com/onedr0p/cluster-template：リポジトリ構成とソフトウェアスタックの参照元
-- https://etcd.io/docs/latest/op-guide/hardware/：etcd のハードウェア要件

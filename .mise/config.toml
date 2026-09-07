@@ -1,0 +1,15 @@
+[env]
+KUBECONFIG = "{{config_root}}/talos/clusterconfig/kubeconfig"
+TALOSCONFIG = "{{config_root}}/talos/clusterconfig/talosconfig"
+SOPS_AGE_KEY_FILE = "{{config_root}}/age.key"
+
+[tools]
+age = "1.3.2"
+cilium-cli = "0.18.9"
+flux2 = "2.9.5"
+helm = "4.2.4"
+helmfile = "1.7.4"
+kubectl = "1.37.0"
+kustomize = "5.8.1"
+sops = "3.13.3"
+talosctl = "1.14.0"
