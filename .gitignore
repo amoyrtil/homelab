@@ -11,6 +11,3 @@ talos/talenv.yaml
 # SOPS の復号鍵。漏れると暗号化済みシークレットがすべて読める
 age.key
 *.agekey
-
-# フェーズ1の測定結果
-talos/phase1/runs/
