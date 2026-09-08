@@ -13,6 +13,7 @@ homelab の構築過程で行った検証と、そこで得た知見の置き場
 | [s100-etcd-evaluation.md](s100-etcd-evaluation.md) | MINISFORUM S100-WLP の UFS ストレージが etcd の fsync 要件に耐えるかの判定。fio による単体測定から、コントロールプレーン2台での持続書き込み負荷試験まで | 2026年8月 |
 | [talos-v1.14-ufs.md](talos-v1.14-ufs.md) | Talos v1.14 で上流カーネルが UFS に対応したことを受け、`talos-ufs` のカスタムビルドが不要になったかを検証。あわせてクラスターを v1.14 へ移行し、MS-03 をワーカーとして投入した記録 | 2026年9月6日 |
 | [cluster-template-evaluation.md](cluster-template-evaluation.md) | `onedr0p/cluster-template` をリポジトリ構成の出発点にするかの評価。派生して Ingress、CI/CD、内部 DNS の方式も決めた | 2026年9月6日 |
+| [service-exposure.md](service-exposure.md) | R4 の着手前に調べた2件。LoadBalancer IP をノードと同じ VLAN に置いたまま BGP へ移せるかと、家庭 LAN 内とインターネットから同じ URL で届くか。前者は LB Pool 専用 VLAN を切る判断につながった | 2026年9月8日 |
 
 ## 横断的な知見
 
@@ -29,3 +30,5 @@ homelab の構築過程で行った検証と、そこで得た知見の置き場
 - **`talos-ufs` は役目を終えた。** Talos v1.14 の標準イメージで S100-WLP にインストールでき、起動する。カーネルの UFS 対応とパーティションサイズの両方が上流で解決している。
 - **MS-03 の NIC は4つとも Talos が認識する。** RTL8127 も `r8169` が掴む。一方 NPU は `intel_vpu` の probe が失敗し、デバイスノードが作られない。
 - **`onedr0p/cluster-template` はジェネレーターとしては採用しない。** ディレクトリ規約、Flux Operator 方式、helmfile ブートストラップ、mise のバージョン固定だけを借りる。
+- **LoadBalancer IP Pool をノードと同じ VLAN に置いたまま BGP へは移せない。** BGP は経路を広告するだけで ARP に応答しないため、同一 VLAN の機器は ARP 解決に失敗して届かなくなる。LB Pool 専用に VLAN 120（物理 VLAN の番号 + 100）を切る。
+- **同じ URL で LAN 内とインターネットの両方から届く。** external-dns 2系統による split-horizon DNS で成立する。ただし LAN 内のクライアントが DoH などで内部 DNS を迂回しないことが前提になる。
