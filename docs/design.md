@@ -63,6 +63,12 @@ VLAN 設計はこの全機器が接続された状態を前提に行う。
 `192.168.<VLAN ID>.0/24` を採用する。
 第3オクテットと VLAN ID を一致させることで、アドレスを見た時点で所属 VLAN が判別できる。
 
+VLAN 番号は2桁と3桁で層を分ける。
+2桁は機器を収容する VLAN、3桁はその上で動くアプリケーションの VLAN とする。
+アプリケーション側の番号は、機器を収容する VLAN の番号に 100 を足す。
+Cilium の LoadBalancer IP Pool は VLAN 20 の Server 上で動くため VLAN 120 に置く。
+下2桁を見れば、そのアプリケーションがどの VLAN のハードウェア上で動いているかが分かる。
+
 Kubernetes の内部 CIDR は既定値を維持する。
 Pod CIDR に `10.244.0.0/16`、Service CIDR に `10.96.0.0/12` を使う。
 ホスト側が `192.168.0.0/16` のため、重複は発生しない。
@@ -72,13 +78,18 @@ Pod CIDR に `10.244.0.0/16`、Service CIDR に `10.96.0.0/12` を使う。
 | VLAN | CIDR | 名前 | 収容する機器 |
 | --- | --- | --- | --- |
 | 10 | 192.168.10.0/24 | Management | UCG-Fiber、USW 4台、U7 3台 |
-| 20 | 192.168.20.0/24 | Server | Kubernetes ノード全台、MS-03 x2、DS923+、Backup DNS、Log Server、Cilium LoadBalancer IP Pool |
+| 20 | 192.168.20.0/24 | Server | Kubernetes ノード全台、MS-03 x2、DS923+、Backup DNS、Log Server |
 | 30 | 192.168.30.0/24 | Trusted | Windows PC、Mac mini、MacBook Pro、モバイル端末、Apple TV、PS5、Switch 2 x2、HTPC、部屋の LAN ドロップ 3系統 |
 | 40 | 192.168.40.0/24 | Untrusted | 信頼度の低い IoT 家電 |
 | 50 | 192.168.50.0/24 | Camera | G5 Turret Ultra、G6 Entry、NVR |
-| 99 | 192.168.99.0/24 | Guest | ゲスト WiFi |
+| 60 | 192.168.60.0/24 | Guest | ゲスト WiFi |
+| 120 | 192.168.120.0/24 | Service | Cilium LoadBalancer IP Pool。機器は収容しない |
 
 VLAN 1（UniFi の既定 VLAN）には機器を収容しない。
+
+VLAN 120 は UniFi にネットワークとして定義し、ゲートウェイ IP だけを持たせる。
+DHCP は動かさない。
+実体は Cilium が BGP で広告する `/32` の集合である。
 
 ### VLAN 20 のアドレス割り当て
 
@@ -89,11 +100,24 @@ VLAN 1（UniFi の既定 VLAN）には機器を収容しない。
 192.168.20.31-39      Kubernetes コントロールプレーンノード（.31, .32, .33）
 192.168.20.41-49      Kubernetes ワーカーノード（.41, .42）
 192.168.20.100        Talos VIP（Kubernetes API エンドポイント）
-192.168.20.150-199    DHCP プール（一時利用、検証機）
-192.168.20.200-250    Cilium LoadBalancer IP Pool
+192.168.20.150-250    DHCP プール（一時利用、検証機）
 ```
 
 サーバー機は全台 DHCP 予約または静的割り当てとし、DHCP プールから払い出さない。
+`.50-.99` と `.101-.149` は空けてある。ノードやストレージが `.31-.49` に収まらなくなったときの拡張余地である。
+
+### VLAN 120 のアドレス割り当て
+
+```
+192.168.120.1         UCG-Fiber（ゲートウェイ）
+192.168.120.100-250   Cilium LoadBalancer IP Pool
+```
+
+100 番から始めるのは、VLAN 20 の `.100`（Kubernetes API の VIP）と対応させるためである。
+どちらもクラスターが提供する仮想アドレスであり、実体のあるノードやストレージの割り当てとは性質が違う。
+
+`.2-.99` は空けてある。
+用途別に IP プールを分けたくなったとき、`serviceSelector` を持つ `CiliumLoadBalancerIPPool` を追加で置く帯として使う。
 
 ### VLAN 間ポリシー
 
@@ -101,7 +125,9 @@ VLAN 1（UniFi の既定 VLAN）には機器を収容しない。
 | --- | --- | --- |
 | Trusted | Management | 許可（UniFi 管理 UI） |
 | Trusted | Server | 許可（kubectl、NAS、各サービスの Web UI） |
+| Trusted | Service | 許可（クラスター上のサービス） |
 | Trusted | Untrusted | 許可（家電の操作） |
+| Server | Service | 許可（VLAN 20 の機器からクラスター上のサービスへ） |
 | Server | Trusted | 応答を除き拒否 |
 | Server | インターネット | 許可 |
 | Untrusted | 内部 VLAN 全般 | 応答と DNS を除き拒否 |
@@ -111,7 +137,34 @@ VLAN 1（UniFi の既定 VLAN）には機器を収容しない。
 | Guest | 内部 VLAN 全般 | DNS を除き拒否 |
 | Guest | インターネット | 許可 |
 
+「内部 VLAN 全般」には VLAN 120 を含む。
+Untrusted と Guest からクラスター上のサービスには到達させない。
+
+NVR をクラスター上に置く場合は Camera から VLAN 120 への許可が要る。
+録画先が決まっていないため、現時点では拒否のままにする（[plan.md](plan.md#いずれ回収する項目) の「UniFi Protect の録画先」）。
+
 全 VLAN から `192.168.20.10`（Backup DNS）への 53/udp と 53/tcp を個別に許可する。
+
+### BGP
+
+Cilium が払い出した LoadBalancer IP を、UCG-Fiber に `/32` で広告する。
+
+| | ASN |
+| --- | --- |
+| UCG-Fiber | 65000 |
+| Kubernetes クラスター | 65001 |
+
+プライベート ASN（64512-65534）から選び、eBGP で対向する。
+ルーター側を 65000 に固定し、クラスターを増やす場合は 65002 以降を振る。
+
+**両側ともノードの台数変化に追従させる。**
+UCG-Fiber は `bgp listen range` で VLAN 20 からの接続を待ち受け、ノードの IP を列挙しない。
+Cilium は `nodeSelector` で対象ノードを選ぶ。
+接続を開始するのは Cilium 側であり、ルーターは待つだけでよい。
+コントロールプレーンやワーカーを増やしても、どちらの設定も変えずに済む。
+
+広告するのはワーカーのみとする。
+`allowSchedulingOnControlPlanes` が `false` であり、コントロールプレーンにワークロードを載せないためである。
 
 ### 必要な設定
 
@@ -224,7 +277,7 @@ Talos は既定で `baseline` を強制するため、これを入れないと�
 - **OS**：Talos Linux。設定管理は talhelper（`talconfig.yaml`）
 - **CNI**：Cilium。kube-proxy を完全に置換し、eBPF モードで動かす。フェーズ1から入れる
 - **Ingress**：Cilium の Gateway API 実装を使う。専用の Ingress コントローラーを足さない。前提として `kubeProxyReplacement=true` と `l7Proxy=true` が要る
-- **LoadBalancer**：Cilium BGP。UCG-Fiber は UniFi OS 4.1.13 以降で BGP に対応しており、FRR 形式の設定ファイルをアップロードして構成する（Settings → Routing → BGP）
+- **LoadBalancer**：Cilium BGP。UCG-Fiber は UniFi OS 4.1.13 以降で BGP に対応しており、FRR 形式の設定ファイルをアップロードして構成する（Settings → Routing → BGP）。LB IP は VLAN 120 から払い出す。ノードと同じ VLAN には置けない（[knowledge/service-exposure.md](knowledge/service-exposure.md)）
 - **外部公開**：Cloudflare Tunnel。ルーターのポートを開けない
 - **証明書**：cert-manager + Let's Encrypt。DNS-01 チャレンジに Cloudflare を使う
 - **内部の名前解決**：external-dns の Pi-hole プロバイダーで、クラスターのホスト名を Pi-hole の Custom DNS に書き込む。DNS サーバーを別途立てない
@@ -300,7 +353,11 @@ v1alpha1 の `cluster.proxy.disabled` ではなく `KubeProxyConfig` ドキュ�
 **LoadBalancer の IP プール**
 
 `CiliumLoadBalancerIPPool` は `bootstrap/cilium-networks.yaml` に置く。
-プールは `192.168.20.200-250`（「VLAN 20 のアドレス割り当て」で確保した帯）。
+プールは `192.168.120.100-250`（「VLAN 120 のアドレス割り当て」で確保した帯）。
+
+**プールをノードと同じ VLAN に置くと、BGP に移したときに同一 VLAN の機器から到達できなくなる。**
+BGP は経路を広告するだけで ARP に応答しないため、その VLAN の機器は宛先を on-link と判断して ARP を出し、応答を得られない。
+実測と対処の経緯は [knowledge/service-exposure.md](knowledge/service-exposure.md) にある。
 
 ## 構築のフェーズ
 

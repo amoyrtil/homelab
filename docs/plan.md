@@ -11,11 +11,11 @@ homelab に Kubernetes クラスターと GitOps ベースの CI/CD を整備す
 ## 現在地
 
 **リハーサル（手順2）の R3 まで完了。次は R4。**
-最終更新は 2026年9月6日である。
+最終更新は 2026年9月8日である。
 
 ### いまのクラスターの状態
 
-**全ノードの電源が落ちている。** ディスクの内容は消していないため、電源を入れれば下記の状態から再開できる。
+**クラスターは起動している。**
 
 | ノード | 機器 | アドレス | 役割 |
 | --- | --- | --- | --- |
@@ -26,6 +26,7 @@ homelab に Kubernetes クラスターと GitOps ベースの CI/CD を整備す
 入っているものは Talos v1.14.0、Kubernetes v1.37.0、Cilium v1.20.1（kube-proxy 置換、L7 proxy、Gateway API、L2 Announcement）である。
 `allowSchedulingOnControlPlanes` は `false` にしてある。
 `GatewayClass`、`CiliumLoadBalancerIPPool`（192.168.20.200-250）、`CiliumL2AnnouncementPolicy` は残してある。
+プールは R4 で VLAN 120（`192.168.120.100-250`）に移す。
 検証に使った nginx と Gateway は削除済みで、`default` namespace は空である。
 
 cp-1 は USB Ethernet ドングル（`r8152`、MAC `6c:1f:f7:d3:99:42`）で接続している。
@@ -34,14 +35,92 @@ S100-WLP は3台のうち2台の内蔵 I226-V に物理層障害があり、そ�
 これはリハーサル環境であり、EliteDesk 到着後に本番として組み直す。
 クラスター名もノード名も暫定のままでよい。
 
+### いまのネットワークの状態
+
+VLAN 設計は実装の途中である。
+作業端末は VLAN 1（`192.168.1.0/24`）にいて、VLAN 20 と VLAN 120 だけが先に切られている。
+
+| 済んだこと | 内容 |
+| --- | --- |
+| VLAN 20 | 作成済み。DHCP プールを `.150-250` に拡張済み |
+| VLAN 120 | 作成済み。ゲートウェイ `192.168.120.1` に作業端末から到達を確認 |
+
+VLAN 10、30、40、50、60 は未着手である。
+DHCP Guarding も入れていない。VLAN 120 は対象外でよいが、機器を収容する VLAN では有効にする価値がある（特に部屋の LAN ドロップがある VLAN 30 とゲスト用の VLAN 60）。
+
 ### 次にやること
 
 **R4: Cilium BGP を UCG-Fiber と対向させる。**
 
-着手前に BGP の ASN と UCG-Fiber の FRR 設定を決める必要がある（「[未決定事項](#未決定事項)」を参照）。
+ASN は決まっており（[design.md の BGP](design.md#bgp)）、UniFi 側の VLAN 120 も作成済みである。
+残るのは Cilium と UCG-Fiber の設定である。
 
-R4 が通れば L2 Announcement は不要になる。
-`bootstrap/cilium-networks.yaml` の `CiliumL2AnnouncementPolicy` を落とし、`CiliumBGPClusterConfig` に置き換える。
+**あわせて LB Pool を VLAN 120 に移す。**
+ノードと同じ VLAN に置いたままでは、BGP に移した時点で VLAN 20 の機器から到達できなくなる。
+根拠は [knowledge/service-exposure.md](knowledge/service-exposure.md) にある。
+
+いま `default` は空でサービスが載っていない。
+プールを切り替えてもダウンタイムが出ないため、切り替えるならこの状態のうちに済ませる。
+
+**手順**
+
+1. Cilium の BGP Control Plane を有効化する。`bootstrap/cilium-values.yaml` に `bgpControlPlane.enabled: true` を足して `helm upgrade` する。これで BGP の CRD が入る
+2. Cilium 側の BGP リソースを作る。`CiliumBGPClusterConfig`、`CiliumBGPPeerConfig`、`CiliumBGPAdvertisement` の3つ。広告はワーカーのみとする
+3. UCG-Fiber に FRR 設定を入れる（下記）
+4. ピア確立を確認する。クラスター側は `cilium bgp peers`、ルーター側は `show ip bgp summary`
+5. `bootstrap/cilium-networks.yaml` のプールを `192.168.120.100-250` に変える
+6. テスト用の Service を作り、新プールから払い出した IP への到達を確認する
+7. `CiliumL2AnnouncementPolicy` を削除し、Helm values の `l2announcements` も外す
+8. 下記の2件を実測する
+
+**UCG-Fiber の FRR 設定**
+
+Settings → Routing → BGP からアップロードする（UniFi のバージョンによっては Policy Engine → Dynamic Routing → BGP）。
+
+```
+router bgp 65000
+ bgp router-id 192.168.20.1
+ no bgp ebgp-requires-policy
+ no bgp default ipv4-unicast
+ !
+ neighbor k8s peer-group
+ neighbor k8s remote-as 65001
+ bgp listen range 192.168.20.0/24 peer-group k8s
+ bgp listen limit 16
+ !
+ address-family ipv4 unicast
+  neighbor k8s activate
+  neighbor k8s soft-reconfiguration inbound
+ exit-address-family
+!
+```
+
+`no bgp ebgp-requires-policy` を落とすと、**ピアは張れるのに経路が一切交換されない**。
+FRR は RFC 8212 に従って eBGP に route-map を要求するためである。
+症状から原因にたどり着きにくいので、最初から入れておく。
+
+`bgp listen range` は、ノードの IP を列挙せずに VLAN 20 からの接続を待ち受ける指定である。
+接続を開始するのは Cilium 側なので、ルーターは待つだけでよい。
+ノードが増えても両側とも設定を変えずに済む。
+
+**UniFi がこの構文を受け付けるかは未確認である。**
+参考にした記事3件はいずれもノード IP を明示列挙しており、UniFi で `listen range` を使った実例を見つけられなかった。
+弾かれた場合は明示列挙にフォールバックする。
+
+```
+ neighbor 192.168.20.31 peer-group k8s
+ neighbor 192.168.20.41 peer-group k8s
+```
+
+フォールバックした場合、ノードを増やすたびに UCG-Fiber 側も更新することになる。
+そのときはフェーズ2とフェーズ3の作業項目に書き足す。
+
+**R4 で測る2件**
+
+どちらも [knowledge/service-exposure.md](knowledge/service-exposure.md) の調査で確認できずに残ったものである。
+
+- **VLAN 20 の機器から VLAN 120 の LB IP に届くか。** 今回の設計変更が狙いどおり効いているかの本丸である。DS923+（`192.168.20.20`）は SSH が閉じているため、測るには VLAN 20 に検証用のホストを用意する必要がある
+- **UniFi の Zone-Based Firewall が、BGP で学習した `/32` をどのゾーンに分類するか。** VLAN 120 を定義すればそのゾーンのポリシーが効く見込みだが、実機で確かめていない
 
 ### 作業の進め方
 
@@ -79,7 +158,7 @@ R1 から R3 までで、**この構成の落とし穴は2つとも Cilium 側�
 - [x] **R1: `cni: none` と kube-proxy 無効でクラスターを作る**（2026年9月6日 完了）
 - [x] **R2: Cilium を kube-proxy 置換・L7 proxy 有効で入れる**（2026年9月6日 完了）
 - [x] **R3: Cilium の Gateway API と LB IPAM**（2026年9月6日 完了）
-- [ ] **R4: Cilium BGP を UCG-Fiber と対向させる**（UCG-Fiber 側の FRR 設定が要る）
+- [ ] **R4: Cilium BGP を UCG-Fiber と対向させる**（UCG-Fiber 側の FRR 設定と、VLAN 120 の定義が要る）
 - [ ] **R5: Longhorn をワーカーにのみ展開する**（レプリカ1）
 - [ ] **R6: Flux Operator と SOPS**
 - [ ] **R7: cert-manager、Cloudflare Tunnel、external-dns**（ドメインと Cloudflare の API トークンが要る）
@@ -141,6 +220,13 @@ CRD をどのチャネルで入れるかと、`bpf.autoMount.enabled` を無効�
 
 L2 Announcement は R4 で BGP に移すまでの確認用であり、ワーカーのみが広告するよう `nodeSelector` を付けている。
 
+**R4 着手前の調査（2026年9月8日）**
+
+BGP に移す前に、LB IP の到達性と名前解決の2点を調べた。
+LB Pool をノードと同じ VLAN に置いたままでは BGP に移せないことが実測で分かり、VLAN 120 を切ることになった。
+同じ URL で家庭 LAN 内とインターネットの両方から届く構成は、既存の external-dns 2系統のまま成立する。
+記録は [knowledge/service-exposure.md](knowledge/service-exposure.md) にある。
+
 ## 構築の作業
 
 台数の推移とフェーズごとの設計は [design.md の「構築のフェーズ」](design.md#構築のフェーズ)にある。
@@ -152,6 +238,7 @@ L2 Announcement は R4 で BGP に移すまでの確認用であり、ワーカ�
 - [ ] MS-03 を `worker-1` として再投入する
 - [ ] 「フェーズ1で入れるコンポーネント」を一式入れる
 - [ ] Pi-hole を移設し、クラスター外の副 DNS を用意する
+- [ ] UCG-Fiber に VLAN 120 を定義する（ゲートウェイ IP のみ、DHCP なし）
 - [ ] UCG-Fiber に FRR の BGP 設定を入れる
 
 **フェーズ2**
@@ -175,9 +262,7 @@ L2 Announcement は R4 で BGP に移すまでの確認用であり、ワーカ�
 
 | 項目 | 内容 | いつまでに |
 | --- | --- | --- |
-| BGP の ASN | クラスター側とルーター側で別の番号を使い、eBGP にする。プライベート ASN（64512-65534）から選ぶ | R4 の着手前 |
-| UCG-Fiber の FRR 設定 | UniFi の Settings → Routing → BGP に設定ファイルをアップロードする方式。UniFi OS 4.1.13 以降で対応 | R4 の着手前 |
-| DNS の常用系と待機系の役割分担 | Backup DNS を先に常用系として立てるか、Pi-hole を別ハードウェアへ移すか。クラスターが安定するまで、作り直しを繰り返す環境に家庭の DNS を載せるわけにはいかない | フェーズ1で Pi-hole を移設する前 |
+| 構築期間中の DNS の常用系 | 定常運用は Pi-hole を primary、Backup DNS を待機系とすることで決着した（[knowledge/service-exposure.md](knowledge/service-exposure.md)）。残るのは構築期間中の扱いで、クラスターの作り直しを繰り返すあいだ Backup DNS を常用系に据えるかを決める | フェーズ1で Pi-hole を移設する前 |
 | EliteDesk のストレージ種別 | NVMe か SATA か | 実機の到着後、ISO を焼く前 |
 | MS-03 の接続 NIC | X710 の SFP+ か RTL8127 の RJ-45 か。USW-Pro-XG-10-PoE の SFP28 ポートは2口しかなく、うち1口は UCG-Fiber への上流で埋まる | 本設置の配線時 |
 | 10GbE 配線の到達範囲 | トポロジ図で USW-Pro-XG-10-PoE のポート 5-10（DS923+、MS-03 x2、サーバーノード x3）が `GbE` と表記されている。同機は全 RJ45 ポートが 10GbE で、MS-03 は 10G SFP+ を2口持つ。機器側 NIC の制約を指しているのか記入漏れなのかを確定させる | 本設置の配線時 |
@@ -189,7 +274,7 @@ L2 Announcement は R4 で BGP に移すまでの確認用であり、ワーカ�
 
 - [ ] **スイッチポートの VLAN 割り当てを記録する**：どのポートを VLAN 20 にしたかの記録がなく、MS-03 の投入時に一度つまずいた
 - [ ] **10GbE で DS923+ との実効スループットを測る**：DS923+ を VLAN 20 に載せてから
-- [ ] **Pi-hole の冗長化**：クラスター内の Pi-hole を primary、Raspberry Pi 3 を replica として `nebula-sync` で設定を同期する。Pi-hole v6 では Gravity Sync も Orbital Sync も動かず、`nebula-sync` が現行の解になる。両方が v6 である必要がある。external-dns が書く Custom DNS のレコードを同期対象に含めるかは、意図を持って決める
+- [ ] **Pi-hole の冗長化**：クラスター内の Pi-hole を primary、Raspberry Pi 3 を replica として `nebula-sync` で設定を同期する。Pi-hole v6 では Gravity Sync も Orbital Sync も動かず、`nebula-sync` が現行の解になる。両方が v6 である必要がある。external-dns が書く Custom DNS のレコードは同期対象に含める。含めないと replica がクラスター上のサービス名を解決できず、待機系として機能しない（[knowledge/service-exposure.md](knowledge/service-exposure.md)）。あわせて DHCP で primary と secondary の両方を配る
 - [ ] **UniFi Protect の録画先**：UCG-Fiber はストレージを持たないため、カメラ2台の録画先が存在しない。UNVR の追加、DS923+ の Surveillance Station、Kubernetes 上の NVR（Frigate 等）が候補になる。選択によって Camera VLAN のポリシーが変わる
 - [ ] **監視**：kube-prometheus-stack。未着手
 - [ ] **バックアップ**：Git リポジトリ + DS923+ のスナップショット。未着手

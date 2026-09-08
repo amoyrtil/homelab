@@ -10,15 +10,24 @@
 
 番号は小さいほど基幹に近い。
 Management を先頭に置き、Server、Trusted と続け、信頼度が下がるにつれて番号を増やす。
+10 番刻みで空けてあるので、たとえば Server と Trusted の間に別の層を挟む余地が残る。
 
-Guest だけを 99 に離してあるのは、今後 VLAN を追加しても Guest が最下位に留まるようにするためである。
-それ以外は 10 番刻みで空けてあるので、たとえば Server と Trusted の間に別の層を挟む余地が残る。
+2桁と3桁で層を分けたのは、機器を収容する VLAN と、その上で動くアプリケーションの VLAN を混ぜないためである。
+アプリケーション側の番号を「収容元の番号 + 100」と決めておくと、対応関係が番号だけで読める。
+VLAN 120 を見た時点で、そこにあるアドレスが VLAN 20 のハードウェア上で動くものだと分かる。
+Management（VLAN 10）で同じことが必要になれば 110 を切ればよく、規則を作り直さずに済む。
 
 ### Kubernetes ノードと DS923+ を VLAN 20 に統合する
 
 分離した場合、NFS と CSI のトラフィックがすべて UCG-Fiber の L3 転送を経由し、配線を 10GbE にしてもゲートウェイのルーティング性能が上限になる。
-Cilium の L2 Announcement も、LoadBalancer IP Pool がノードと同一 L2 ドメインにあることを要求する。
-この二つの制約から、ノード、ストレージ、LB Pool は同一 VLAN に置く。
+この制約から、ノードとストレージは同一 VLAN に置く。
+
+LB Pool も当初はここに含めていた。
+Cilium の L2 Announcement が、LoadBalancer IP Pool とノードの同一 L2 ドメインを要求するためである。
+しかし BGP に移すと制約は逆に働き、同一 L2 に置くことが障害になる。
+BGP は経路を広告するだけで ARP に応答しないため、その VLAN の機器は宛先を on-link と判断して ARP を出し、誰からも応答を得られない。
+LB Pool だけを VLAN 120 に分けたのはこのためである。
+実測の記録は [service-exposure.md](service-exposure.md) にある。
 
 ### Backup DNS と Log Server を VLAN 20 に置く
 
