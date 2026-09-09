@@ -1,0 +1,21 @@
+# locally-managed の Tunnel は ingress ルールをオリジン側に置く。
+# Zero Trust ダッシュボードで持たせると、公開しているものが Git に残らない。
+#
+# ルールを外部 Gateway 1つに絞り、末尾を 404 で閉じる。
+# 自分のドメイン以外の名前でトンネルに入ってきた要求は、ここで落ちる。
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloudflared
+  namespace: network
+data:
+  config.yaml: |
+    tunnel: ${SECRET_CLOUDFLARE_TUNNEL_ID}
+    credentials-file: /etc/cloudflared/creds/credentials.json
+    metrics: 0.0.0.0:2000
+    no-autoupdate: true
+    ingress:
+      - hostname: "*.${SECRET_DOMAIN}"
+        service: http://cilium-gateway-external.network.svc.cluster.local:80
+      - service: http_status:404

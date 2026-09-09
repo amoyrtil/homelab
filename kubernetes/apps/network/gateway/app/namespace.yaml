@@ -1,0 +1,7 @@
+# cloudflared と external-dns もこの namespace に入る。
+# 3つのアプリで共有するため、Gateway 側で作って他は dependsOn で待つ。
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: network
