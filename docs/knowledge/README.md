@@ -23,6 +23,7 @@ homelab の構築過程で行った検証と、そこで得た知見の置き場
 | ファイル | 内容 |
 | --- | --- |
 | [design-rationale.md](design-rationale.md) | [../design.md](../design.md) の決定ひとつひとつについて、なぜそう決めたか。VLAN 配置、システム拡張の取捨、SMB と Longhorn の使い分け、フェーズごとのレプリカ推移 |
+| [cluster-bootstrap-order.md](cluster-bootstrap-order.md) | クラスターをゼロから立てる順序。R1 から R6 の手順を実行できる順に並べ、入れ替えられない依存関係をまとめたもの |
 | [talos-operations.md](talos-operations.md) | 機種や個別の検証に依らない Talos の挙動。v1.14 の設定ドキュメント分割、Image Factory のイメージパス、`reset` の破壊範囲、Pod Security Admission、メンテナンスモードのアドレス取得 |
 
 ## 結論の要約
@@ -43,3 +44,4 @@ homelab の構築過程で行った検証と、そこで得た知見の置き場
 - **flux-operator は `FluxInstance` の名前によらず `flux-system` という名前で GitRepository を作る。** `sourceRef` はそちらを指す。
 - **Kubernetes の Secret は `encrypted_regex: ^(data|stringData)$` で暗号化する。** ファイル全体を暗号化すると `kind` まで隠れ、kustomize がリソースとして読めない。
 - **手でクラスターに入れる鍵は `sops-age` の1つだけ。** リポジトリが public のため Git 認証が要らない。private 化やオーガナイゼーション移行のときに2つ目が要る。
+- **クラスターを立てる順序は4箇所で入れ替えられない。** `cniConfig: none` は構築時にしか効かず、Gateway API の CRD は Cilium より先、Cilium は flux-operator より先、`sops-age` は `FluxInstance` より先である。

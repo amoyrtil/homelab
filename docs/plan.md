@@ -31,6 +31,11 @@ Longhorn 1.12.1 が `longhorn-system` に入っており、worker-1 のみに展
 Flux が `flux-system` で動き、`kubernetes/` 以下を同期している。Longhorn はその管理下にある。
 検証に使ったリソースは削除済みで、`default` namespace は空である。
 
+**手でクラスターに入れたものは3つある。**
+Cilium の Helm リリース、flux-operator の Helm リリース、`sops-age` Secret である。
+残りは Flux が Git から反映する。
+クラスターを作り直すときの順序は [knowledge/cluster-bootstrap-order.md](knowledge/cluster-bootstrap-order.md) にまとめてある。
+
 cp-1 は USB Ethernet ドングル（`r8152`、MAC `6c:1f:f7:d3:99:42`）で接続している。
 S100-WLP は3台のうち2台の内蔵 I226-V に物理層障害があり、そのための回避策である。
 
@@ -55,7 +60,14 @@ DHCP Guarding も入れていない。VLAN 120 は対象外でよいが、機器
 
 **R7: cert-manager、Cloudflare Tunnel、external-dns（Cloudflare 系統のみ）。**
 
-ドメインと Cloudflare の API トークンが要る。
+着手には、こちらで用意できないものが3つ要る。
+
+| 要るもの | 用途 |
+| --- | --- |
+| ドメイン | Cloudflare で管理しているゾーン。`HTTPRoute` の hostname と証明書の対象になる |
+| Cloudflare の API トークン | cert-manager の DNS-01 チャレンジと external-dns。`Zone:DNS:Edit` と `Zone:Zone:Read` |
+| Cloudflare Tunnel | トンネルを1つ作り、その認証情報 |
+
 トークンは SOPS で暗号化して `kubernetes/` に置き、Flux に復号させる。R6 で経路は通してある。
 
 **external-dns の Pi-hole 系統は R7 の範囲外とする。**
@@ -319,6 +331,7 @@ Backup DNS はクラスターと無関係に建てられるので、順番を入
 - [ ] **10GbE で DS923+ との実効スループットを測る**：DS923+ を VLAN 20 に載せてから
 - [ ] **Pi-hole の冗長化**：クラスター内の Pi-hole を primary、Raspberry Pi 3 を replica として `nebula-sync` で設定を同期する。Pi-hole v6 では Gravity Sync も Orbital Sync も動かず、`nebula-sync` が現行の解になる。両方が v6 である必要がある。external-dns が書く Custom DNS のレコードは同期対象に含める。含めないと replica がクラスター上のサービス名を解決できず、待機系として機能しない（[knowledge/service-exposure.md](knowledge/service-exposure.md)）。あわせて DHCP で primary と secondary の両方を配る
 - [ ] **UniFi Protect の録画先**：UCG-Fiber はストレージを持たないため、カメラ2台の録画先が存在しない。UNVR の追加、DS923+ の Surveillance Station、Kubernetes 上の NVR（Frigate 等）が候補になる。選択によって Camera VLAN のポリシーが変わる
+- [ ] **external-dns の Pi-hole プロバイダーが Pi-hole v6 で動くか**：未確認である。v6 は API が変わっており、`nebula-sync` を採ったのも v6 で Gravity Sync と Orbital Sync が動かなかったためで、同じ理由で引っかかる可能性がある。動かない場合は、内部 DNS を UniFi の Local DNS Records に寄せて external-dns の UniFi webhook から書く案（[knowledge/service-exposure.md](knowledge/service-exposure.md) で一度は退けたもの）の再検討になり、design.md の「内部の名前解決」の判断が変わる。着手はフェーズ1の Pi-hole 移設以降になるが、結論によって設計が変わるため早めに調べる価値がある
 - [ ] **監視**：kube-prometheus-stack。未着手
 - [ ] **バックアップ**：Git リポジトリ + DS923+ のスナップショット。未着手
 - [ ] **MS-03 の NPU**：`intel_vpu` の probe が `-EIO` で失敗する。使う段になったらカーネルの更新か BIOS 設定を確認する
