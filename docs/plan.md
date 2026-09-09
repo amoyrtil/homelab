@@ -53,10 +53,14 @@ DHCP Guarding も入れていない。VLAN 120 は対象外でよいが、機器
 
 ### 次にやること
 
-**R7: cert-manager、Cloudflare Tunnel、external-dns。**
+**R7: cert-manager、Cloudflare Tunnel、external-dns（Cloudflare 系統のみ）。**
 
 ドメインと Cloudflare の API トークンが要る。
 トークンは SOPS で暗号化して `kubernetes/` に置き、Flux に復号させる。R6 で経路は通してある。
+
+**external-dns の Pi-hole 系統は R7 の範囲外とする。**
+内部 DNS が待機系を持たないうちに宅内の名前解決をクラスターに寄せると、クラスターの停止が家中に波及する。
+着手の条件はフェーズ1の作業項目に書いた。
 
 あわせて Flux の Webhook Receiver をここで入れる。
 GitHub の push を直接受けるには受け口を外に出す必要があり、Cloudflare Tunnel が前提になる。
@@ -263,7 +267,22 @@ UCG-Fiber 側の VLAN 120 と BGP はリハーサルで投入済みであり、�
 - [ ] EliteDesk 800 G6 を1台、`cp-1` として構築する
 - [ ] MS-03 を `worker-1` として再投入する
 - [ ] 「フェーズ1で入れるコンポーネント」を一式入れる
-- [ ] Pi-hole を移設し、クラスター外の副 DNS を用意する
+- [ ] クラスター外に Backup DNS を構築する
+- [ ] Pi-hole をクラスター上へ移設する
+- [ ] Pi-hole と Backup DNS の同期機構（`nebula-sync`）を動かす
+- [ ] external-dns の Pi-hole 系統を有効にする
+
+**Pi-hole 周りの4項目は、この順に片付ける。**
+external-dns の Pi-hole 系統を動かすと、宅内の名前解決がクラスター上の Pi-hole に依存する。
+待機系と同期が揃う前にそこへ寄せると、クラスターを止めるたびに家中の名前解決が落ちる。
+
+**Backup DNS はクラスターより先に建てる。**
+いまの Pi-hole は S100-WLP 上のスタンドアロンで動いており、クラスターの作り直しの影響を受けない。
+これをクラスターへ移した時点で名前解決がクラスターに依存するため、待機系が先にないと移設のあいだが無防備になる。
+Backup DNS はクラスターと無関係に建てられるので、順番を入れ替える手戻りはない。
+移設のあいだ DHCP で primary と secondary の両方を配っておけば、移設作業そのものも安全になる。
+
+同期の対象に external-dns が書く Custom DNS のレコードを含める点は「[いずれ回収する項目](#いずれ回収する項目)」にある。
 
 **フェーズ2**
 
@@ -286,7 +305,7 @@ UCG-Fiber 側の VLAN 120 と BGP はリハーサルで投入済みであり、�
 
 | 項目 | 内容 | いつまでに |
 | --- | --- | --- |
-| 構築期間中の DNS の常用系 | 定常運用は Pi-hole を primary、Backup DNS を待機系とすることで決着した（[knowledge/service-exposure.md](knowledge/service-exposure.md)）。残るのは構築期間中の扱いで、クラスターの作り直しを繰り返すあいだ Backup DNS を常用系に据えるかを決める | フェーズ1で Pi-hole を移設する前 |
+| 構築期間中の DNS の常用系 | 定常運用は Pi-hole を primary、Backup DNS を待機系とすることで決着した（[knowledge/service-exposure.md](knowledge/service-exposure.md)）。残るのは構築期間中の扱いで、クラスターの作り直しを繰り返すあいだ Backup DNS を常用系に据えるかを決める。いまの Pi-hole は S100-WLP 上のスタンドアロンで動いており、クラスターの作り直しの影響を受けない | フェーズ1で Pi-hole を移設する前 |
 | EliteDesk のストレージ種別 | NVMe か SATA か | 実機の到着後、ISO を焼く前 |
 | MS-03 の接続 NIC | X710 の SFP+ か RTL8127 の RJ-45 か。USW-Pro-XG-10-PoE の SFP28 ポートは2口しかなく、うち1口は UCG-Fiber への上流で埋まる | 本設置の配線時 |
 | 10GbE 配線の到達範囲 | トポロジ図で USW-Pro-XG-10-PoE のポート 5-10（DS923+、MS-03 x2、サーバーノード x3）が `GbE` と表記されている。同機は全 RJ45 ポートが 10GbE で、MS-03 は 10G SFP+ を2口持つ。機器側 NIC の制約を指しているのか記入漏れなのかを確定させる | 本設置の配線時 |
