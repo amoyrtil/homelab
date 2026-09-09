@@ -15,6 +15,7 @@ homelab の構築過程で行った検証と、そこで得た知見の置き場
 | [cluster-template-evaluation.md](cluster-template-evaluation.md) | `onedr0p/cluster-template` をリポジトリ構成の出発点にするかの評価。派生して Ingress、CI/CD、内部 DNS の方式も決めた | 2026年9月6日 |
 | [service-exposure.md](service-exposure.md) | R4 の着手前に調べた2件。LoadBalancer IP をノードと同じ VLAN に置いたまま BGP へ移せるかと、家庭 LAN 内とインターネットから同じ URL で届くか。前者は LB Pool 専用 VLAN を切る判断につながった | 2026年9月8日 |
 | [bgp-peering.md](bgp-peering.md) | R4 の記録。Cilium の LoadBalancer IP を UCG-Fiber へ BGP で広告し、L2 Announcement を外すまで。UniFi の Zone-Based Firewall が BGP 経路の宛先をどう分類するかもここで確定した | 2026年9月9日 |
+| [longhorn-on-talos.md](longhorn-on-talos.md) | R5 の記録。Longhorn をワーカーにのみ展開し、レプリカ1で PVC を通すまで。Talos 側に要る kubelet の bind mount と、コントロールプレーンを外す方法 | 2026年9月9日 |
 
 ## 横断的な知見
 
@@ -36,3 +37,5 @@ homelab の構築過程で行った検証と、そこで得た知見の置き場
 - **UniFi の Zone-Based Firewall は宛先ネットワークでゾーンを決める。** BGP で学習した `/32` は、next-hop が別 VLAN にあっても、アドレスの属する VLAN のゾーンに入る。LB IP のアクセス制御を VLAN 120 のゾーンポリシーで書ける。
 - **`bgp listen range` は UniFi に通る。** UCG-Fiber 側にノード IP を列挙する必要はなく、ノードを増やしてもルーターの設定は変えずに済む。
 - **Cilium は values を変えても Pod を入れ替えない。** `rollOutCiliumPods` と `operator.rollOutPods` と `envoy.rollOutPods` を有効にしないと、`helm upgrade` が成功したまま設定が効かない。
+- **Longhorn は Talos の kubelet に `/var/lib/longhorn` の bind mount を要求する。** `rshared` で伝播させないと CSI のマウントが kubelet に見えない。適用にノードの再起動は要らない。
+- **Longhorn をワーカーに限定するのに `nodeSelector` は要らない。** チャートの `taintToleration` が既定で空であり、コントロールプレーンの taint を許容しないためである。

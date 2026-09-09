@@ -76,6 +76,24 @@ nodes:
           - network: 0.0.0.0/0
             gateway: 192.168.20.1
 
+worker:
+  patches:
+    # Longhorn のデータ置き場を kubelet から見えるようにする。
+    # Talos の kubelet はコンテナで動くため、この bind mount がないと
+    # CSI が作るマウントが kubelet へ伝播せず、ボリュームを attach できない。
+    # rshared は、Longhorn 側で作られたマウントを kubelet 側へ伝えるために要る。
+    - |-
+      machine:
+        kubelet:
+          extraMounts:
+            - destination: /var/lib/longhorn
+              type: bind
+              source: /var/lib/longhorn
+              options:
+                - bind
+                - rshared
+                - rw
+
 controlPlane:
   patches:
     # kube-proxy は Cilium が置き換えるため作らせない。

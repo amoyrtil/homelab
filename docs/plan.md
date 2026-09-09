@@ -10,7 +10,7 @@ homelab に Kubernetes クラスターと GitOps ベースの CI/CD を整備す
 
 ## 現在地
 
-**リハーサル（手順2）の R4 まで完了。次は R5。**
+**リハーサル（手順2）の R5 まで完了。次は R6。**
 最終更新は 2026年9月9日である。
 
 ### いまのクラスターの状態
@@ -27,7 +27,8 @@ homelab に Kubernetes クラスターと GitOps ベースの CI/CD を整備す
 `allowSchedulingOnControlPlanes` は `false` にしてある。
 `GatewayClass`、`CiliumLoadBalancerIPPool`（`192.168.120.100-250`）、BGP の3リソースが載っている。
 `CiliumL2AnnouncementPolicy` は R4 で削除した。
-検証に使った nginx と Service は削除済みで、`default` namespace は空である。
+Longhorn 1.12.1 が `longhorn-system` に入っており、worker-1 のみに展開されている。
+検証に使ったリソースは削除済みで、`default` namespace は空である。
 
 cp-1 は USB Ethernet ドングル（`r8152`、MAC `6c:1f:f7:d3:99:42`）で接続している。
 S100-WLP は3台のうち2台の内蔵 I226-V に物理層障害があり、そのための回避策である。
@@ -51,23 +52,25 @@ DHCP Guarding も入れていない。VLAN 120 は対象外でよいが、機器
 
 ### 次にやること
 
-**R5: Longhorn をワーカーにのみ展開する。**
+**R6: Flux Operator と SOPS。**
 
-決まっていることは [design.md の「ストレージ」](design.md#ストレージ) にある。
-コントロールプレーンには載せず、DaemonSet が control-plane の taint を許容しないよう設定する。
-namespace には `pod-security.kubernetes.io/enforce=privileged` を与える。
-Talos は既定で `baseline` を強制するため、これがないと動かない。
+方針は決まっている。
+Flux Operator と `FluxInstance` で管理し、main へのマージをトリガーに反映する（[design.md のソフトウェア構成](design.md#ソフトウェア構成)）。
+シークレットは SOPS + age で、暗号化済みの Secret を Git にコミットする。
 
-ワーカーは MS-03 の1台だけなので、レプリカ数は 1 とする。
-MS-03 の schematic には `iscsi-tools` と `util-linux-tools` が既に入っている。
+`.sops.yaml` と `talos/talsecret.sops.yaml` は既にあり、age の鍵は `~/.config/sops/age/keys.txt` にある。
+
+着手前に1つ直すものがある。
+`.mise/config.toml` の `SOPS_AGE_KEY_FILE` がリポジトリ直下の `age.key` を指しているが、このファイルは存在しない。
+いまは sops が既定の場所にフォールバックして動いているだけである。
 
 手順は着手時に詰める。
 
 ### 作業の進め方
 
 - [x] **1. テンプレートの評価** — `onedr0p/cluster-template` を採用するか判断する。記録は [knowledge/cluster-template-evaluation.md](knowledge/cluster-template-evaluation.md)
-- [ ] **2. リハーサル** — いま動いているクラスターで、フェーズ1の構成を通す。R1 から R4 まで完了。詳細は「[リハーサル](#リハーサル)」節
-- [ ] **3. 知見の集約** — 2 の結果を `knowledge/` に記録する。R1 から R4 の分は [knowledge/talos-operations.md](knowledge/talos-operations.md) と [knowledge/bgp-peering.md](knowledge/bgp-peering.md) に反映済み
+- [ ] **2. リハーサル** — いま動いているクラスターで、フェーズ1の構成を通す。R1 から R5 まで完了。詳細は「[リハーサル](#リハーサル)」節
+- [ ] **3. 知見の集約** — 2 の結果を `knowledge/` に記録する。R1 から R5 の分は [knowledge/talos-operations.md](knowledge/talos-operations.md)、[knowledge/bgp-peering.md](knowledge/bgp-peering.md)、[knowledge/longhorn-on-talos.md](knowledge/longhorn-on-talos.md) に反映済み
 - [ ] **4. 規約の整備** — 命名規則など homelab 全体のルールを決め、プロジェクトルートの `CLAUDE.md` を更新する
 - [ ] **5. フェーズ1の構築** — EliteDesk 到着後、クラスターを本番として組み直す
 
@@ -100,7 +103,7 @@ R1 から R4 までで踏んだ落とし穴は、**いずれも Cilium 側にあ
 - [x] **R2: Cilium を kube-proxy 置換・L7 proxy 有効で入れる**（2026年9月6日 完了）
 - [x] **R3: Cilium の Gateway API と LB IPAM**（2026年9月6日 完了）
 - [x] **R4: Cilium BGP を UCG-Fiber と対向させる**（2026年9月9日 完了）
-- [ ] **R5: Longhorn をワーカーにのみ展開する**（レプリカ1）
+- [x] **R5: Longhorn をワーカーにのみ展開する**（2026年9月9日 完了）
 - [ ] **R6: Flux Operator と SOPS**
 - [ ] **R7: cert-manager、Cloudflare Tunnel、external-dns**（ドメインと Cloudflare の API トークンが要る）
 
@@ -109,7 +112,7 @@ R1 から R3 が山場である。
 
 ### 完了した検証
 
-R1 から R4 で確定した設定値は [design.md の「Talos と Cilium の必須設定」](design.md#talos-と-cilium-の必須設定)に移してある。
+R1 から R5 で確定した設定値は [design.md の「Talos と Cilium の必須設定」](design.md#talos-と-cilium-の必須設定)に移してある。
 ここには実測の結果だけを残す。
 
 **R1 の結果（2026年9月6日）**
@@ -195,6 +198,31 @@ design.md のゾーン間ポリシー表は、この前提のまま成立する�
 `rollOutCiliumPods` と `operator.rollOutPods` と `envoy.rollOutPods` を有効にして解消した。
 
 詳細は [knowledge/bgp-peering.md](knowledge/bgp-peering.md) にある。
+
+**R5 の結果（2026年9月9日、Longhorn 1.12.1）**
+
+| 確認項目 | 結果 |
+| --- | --- |
+| `apply-config` の再起動 | 不要（`Applied configuration without a reboot`） |
+| Pod の配置 | 19個すべて worker-1。cp-1 は0件 |
+| `nodes.longhorn.io` | `READY: True`、`SCHEDULABLE: True` |
+| ディスクの認識 | `/var/lib/longhorn`、244.0 GB 利用可能 / 253.6 GB |
+| StorageClass | `longhorn`（default）と `longhorn-static` |
+| PVC | `Bound`、1Gi。Pod を作り直しても md5 が一致 |
+| レプリカ | 1本、worker-1 上で `running` |
+| Cilium への影響 | BGP セッションは維持。Node は両方 `Ready` |
+
+**Talos 側に kubelet の bind mount が要る。**
+`/var/lib/longhorn` を `rshared` で bind mount しないと、CSI が作るマウントが kubelet へ伝播しない。
+`talconfig.yaml` の `worker.patches` に足した。ノードの再起動は要らなかった。
+
+**ワーカーに限定するのに `nodeSelector` は要らない。**
+チャートの `taintToleration` が既定で空であり、コントロールプレーンの taint を許容しないためである。
+
+**非 root の Pod から PVC を使うには `fsGroup` が要る。**
+Longhorn が作るボリュームは root 所有で、`fsGroup` がないと `Permission denied` になる。
+
+詳細は [knowledge/longhorn-on-talos.md](knowledge/longhorn-on-talos.md) にある。
 
 ## 構築の作業
 
