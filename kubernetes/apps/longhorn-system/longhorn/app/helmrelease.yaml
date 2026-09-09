@@ -1,0 +1,33 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: longhorn
+  namespace: longhorn-system
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: longhorn
+      version: 1.12.1
+      sourceRef:
+        kind: HelmRepository
+        name: longhorn
+        namespace: longhorn-system
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    # ワーカーへの展開は taint に任せる。チャートの taintToleration は既定が空で、
+    # cp-1 の node-role.kubernetes.io/control-plane:NoSchedule を許容しないため、
+    # 何も指定しなければコントロールプレーンには載らない。
+    defaultSettings:
+      # ワーカーが MS-03 の1台だけなので、レプリカを増やしても同じディスクに載る。
+      # フェーズ2で S100-WLP を足したときに 2 へ上げる。
+      defaultReplicaCount: 1
+      # talconfig.yaml で kubelet に bind mount したパスと揃える。
+      # ここを変えるなら Talos 側の extraMounts も変える。
+      defaultDataPath: /var/lib/longhorn

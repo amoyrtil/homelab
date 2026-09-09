@@ -1,7 +1,8 @@
 [env]
 KUBECONFIG = "{{config_root}}/talos/clusterconfig/kubeconfig"
 TALOSCONFIG = "{{config_root}}/talos/clusterconfig/talosconfig"
-SOPS_AGE_KEY_FILE = "{{config_root}}/age.key"
+# SOPS の age 秘密鍵は sops 既定の ~/.config/sops/age/keys.txt に置く。
+# ここで上書きしない。別のマシンで作業するときは、その場所に鍵を配る。
 
 [tools]
 age = "1.3.2"

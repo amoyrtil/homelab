@@ -299,9 +299,9 @@ Talos の kubelet はコンテナで動くため、これがないと CSI が作
 - **証明書**：cert-manager + Let's Encrypt。DNS-01 チャレンジに Cloudflare を使う
 - **内部の名前解決**：external-dns の Pi-hole プロバイダーで、クラスターのホスト名を Pi-hole の Custom DNS に書き込む。DNS サーバーを別途立てない
 - **ストレージ**：「ストレージ」節のとおり。フェーズ1から入れる
-- **GitOps**：Flux v2。Flux Operator と FluxInstance で管理する。main ブランチへのマージをトリガーに反映する
+- **GitOps**：Flux v2。Flux Operator と FluxInstance で管理する。main ブランチへのマージをトリガーに反映する。flux-operator は bootstrap 側に helm で入れ、`FluxInstance` が `kubernetes/flux/cluster` を入口に同期する。アプリは `kubernetes/apps/<namespace>/<app>/{ks.yaml, app/}` に置く
 - **CI/CD**：Flux の Webhook Receiver を使う。GitHub Actions はクラスターに触らない。push イベントを Cloudflare Tunnel 経由で受け、Flux が即座に Git を pull する。CI 側の仕事はマニフェストの検証と Renovate による更新 PR に限る
-- **シークレット管理**：SOPS + age。暗号化済み Secret を Git にコミットする
+- **シークレット管理**：SOPS + age。暗号化済み Secret を Git にコミットする。Kubernetes のマニフェストは `encrypted_regex: ^(data|stringData)$` で `data` と `stringData` だけを暗号化する。age の秘密鍵は `flux-system` の `sops-age` Secret として手で入れる（[knowledge/flux-bootstrap.md](knowledge/flux-bootstrap.md)）
 - **リポジトリ構成**：`onedr0p/cluster-template` に準拠する
 - **ツール管理**：mise。ローカル環境の再現性を確保する
 

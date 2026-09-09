@@ -1,0 +1,12 @@
+# Talos は Pod Security Admission を既定で baseline に設定する。
+# Longhorn は特権コンテナを使うため privileged が要る。
+# enforce だけでも動くが、audit と warn を揃えないと Pod を作るたびに警告が出る。
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: longhorn-system
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/audit: privileged
+    pod-security.kubernetes.io/warn: privileged
