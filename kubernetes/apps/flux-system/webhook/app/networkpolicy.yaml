@@ -1,0 +1,24 @@
+# flux-operator が `cluster.networkPolicy: true` で入れる allow-webhooks は、
+# ingress の from を namespaceSelector に限っている。
+# Gateway から入ってくる要求は Cilium から見て Pod ではなく world の
+# identity を持つため、これだけでは 503 で落ちる。
+#
+# from を書かないことで、外部からの要求を含めて 9292 への ingress を許す。
+# 公開しても差し支えないのは、パスが推測できない hash であり、
+# 本文の HMAC 署名を notification-controller が検証するためである。
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-webhooks-external
+  namespace: flux-system
+spec:
+  podSelector:
+    matchLabels:
+      app: notification-controller
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 9292
