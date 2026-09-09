@@ -1,0 +1,16 @@
+# リハーサル用の Longhorn 値。R6 で Flux の HelmRelease に載せ替える。
+
+# ワーカーへの展開は taint に任せる。チャートの taintToleration は既定が空で、
+# cp-1 の node-role.kubernetes.io/control-plane:NoSchedule を許容しないため、
+# 何も指定しなければコントロールプレーンには載らない。
+
+defaultSettings:
+  # ワーカーが MS-03 の1台だけなので、レプリカを増やしても同じディスクに載る。
+  # フェーズ2で S100-WLP を足したときに 2 へ上げる。
+  defaultReplicaCount: 1
+  # talconfig.yaml で kubelet に bind mount したパスと揃える。
+  # ここを変えるなら Talos 側の extraMounts も変える。
+  defaultDataPath: /var/lib/longhorn
+
+# persistence.defaultClass は既定の true のまま。longhorn をクラスター既定の
+# StorageClass にする。メディアは csi-driver-smb 側で明示的に選ぶ。
