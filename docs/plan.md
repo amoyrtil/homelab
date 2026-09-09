@@ -35,8 +35,9 @@ cert-manager 1.21.1 が `cert-manager` に入り、Let's Encrypt の ClusterIssu
 Flux の `Receiver` が `flux-system` にあり、GitHub の push をトンネル経由で受ける。
 検証に使ったリソースは削除済みで、`default` namespace は空である。
 
-**手でクラスターに入れたものは3つある。**
-Cilium の Helm リリース、flux-operator の Helm リリース、`sops-age` Secret である。
+**手でクラスターに入れたものは4つある。**
+Cilium の Helm リリース、flux-operator の Helm リリース、`sops-age` Secret、`FluxInstance` である。
+`FluxInstance` は Flux 自身の構成であり、Flux で管理できないため `bootstrap/flux-instance.yaml` を手で適用する。
 残りは Flux が Git から反映する。
 クラスターを作り直すときの順序は [knowledge/cluster-bootstrap-order.md](knowledge/cluster-bootstrap-order.md) にまとめてある。
 
@@ -74,12 +75,13 @@ state は Cloudflare R2 に置く。
 調査の記録は [knowledge/terraform-provisioning.md](knowledge/terraform-provisioning.md) にある。
 `unifi_firewall_policy` の `index` が read-only であり、ポリシーの順序を Terraform から管理できない点に注意する。
 
-**R7 から持ち越した作業が2つある。**
+**R7 から持ち越した作業が1つある。**
+cloudflared の egress を絞る `CiliumNetworkPolicy` である。
+Cilium の Gateway API はデータプレーンが Pod endpoint ではないため、外部 Gateway だけを許可する書き方を単独で検証する必要がある。
 
-| 内容 | R7 に入れなかった理由 |
-| --- | --- |
-| cloudflared の egress を絞る `CiliumNetworkPolicy` | Cilium の Gateway API はデータプレーンが Pod endpoint ではないため、外部 Gateway だけを許可する書き方を単独で検証する必要がある |
-| external-dns の Pi-hole 系統 | 内部 DNS が待機系を持たないうちに宅内の名前解決をクラスターへ寄せると、クラスターの停止が家中に波及する。着手の条件はフェーズ1の作業項目にある |
+external-dns の Pi-hole 系統はリハーサルでは扱わない。
+待機系となる Backup DNS がフェーズ1の成果物であり、それが建つ前に宅内の名前解決をクラスターへ寄せられないためである。
+作業項目はフェーズ1にある。
 
 ### 作業の進め方
 
