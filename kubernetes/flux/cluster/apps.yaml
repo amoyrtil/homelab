@@ -10,8 +10,10 @@ spec:
   path: ./kubernetes/apps
   prune: true
   sourceRef:
+    # flux-operator は FluxInstance の名前によらず、GitRepository と
+    # 入口の Kustomization を flux-system という名前で作る。
     kind: GitRepository
-    name: flux
+    name: flux-system
   # SOPS で暗号化した Secret を復号する。鍵はクラスターに手で入れた
   # sops-age Secret にある。Git には置かない。
   decryption:
