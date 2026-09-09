@@ -1,5 +1,6 @@
-# LoadBalancer に払い出す IP の範囲。
-# docs/plan.md「VLAN 20 のアドレス割り当て」で確保した帯である。
+# LoadBalancer に払い出す IP の範囲。VLAN 120 に置く。
+# ノードと同じ VLAN に置くと BGP へ移した時点で VLAN 20 の機器から届かなくなる。
+# 根拠は docs/knowledge/service-exposure.md にある。
 ---
 apiVersion: cilium.io/v2
 kind: CiliumLoadBalancerIPPool
@@ -7,21 +8,5 @@ metadata:
   name: default
 spec:
   blocks:
-    - start: 192.168.20.200
-      stop: 192.168.20.250
----
-# 払い出した IP を L2 で広告する。R4 で BGP に移すまでの確認用。
-apiVersion: cilium.io/v2alpha1
-kind: CiliumL2AnnouncementPolicy
-metadata:
-  name: default
-spec:
-  # ワーカーのみが広告する。コントロールプレーンにワークロードは載らない。
-  nodeSelector:
-    matchExpressions:
-      - key: node-role.kubernetes.io/control-plane
-        operator: DoesNotExist
-  interfaces:
-    - ^eno[0-9]+.*
-  externalIPs: true
-  loadBalancerIPs: true
+    - start: 192.168.120.100
+      stop: 192.168.120.250

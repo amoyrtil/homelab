@@ -51,17 +51,24 @@ securityContext:
 # コントロールプレーンが1台なので operator も1つでよい
 operator:
   replicas: 1
+  rollOutPods: true
 
-# Gateway API。CRD は別途 kubectl apply で入れる（standard channel, v1.6.1）
+# values を変えても、既定では ConfigMap が書き換わるだけで Pod は入れ替わらない。
+# Cilium は設定を起動時に読むため、変更が黙って効かないまま残る。
+# この3つを有効にすると ConfigMap のハッシュが Pod の annotation に入り、
+# helm upgrade がそのままロールアウトになる。
+rollOutCiliumPods: true
+
+envoy:
+  rollOutPods: true
+
+# Gateway API。CRD は別途 kubectl apply --server-side で入れる。
+# experimental チャネルの v1.6.1 を使う。standard には tlsroutes がなく、
+# 使う予定がなくても operator が7種すべての存在を要求する。
 gatewayAPI:
   enabled: true
 
-# LoadBalancer の IP を L2 で広告する。R4 で BGP に切り替えるまでの確認用。
-l2announcements:
+# BGP Control Plane。LoadBalancer IP を UCG-Fiber へ /32 で広告する。
+# 有効化すると CiliumBGPClusterConfig などの CRD が入る。
+bgpControlPlane:
   enabled: true
-
-# L2 Announcement は Kubernetes API へのアクセスが増えるため、既定の
-# client-rate-limit では leader election が失敗しやすい。
-k8sClientRateLimit:
-  qps: 50
-  burst: 100
