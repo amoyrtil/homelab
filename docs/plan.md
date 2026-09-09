@@ -11,7 +11,7 @@ homelab に Kubernetes クラスターと GitOps ベースの CI/CD を整備す
 ## 現在地
 
 **リハーサル（手順2）の R7 に着手した。**
-cert-manager までマニフェストを書き、Cloudflare の API トークンを待っている。
+手順1から5までマニフェストを書き、main へのマージを待っている。
 最終更新は 2026年9月9日である。
 
 ### いまのクラスターの状態
@@ -70,24 +70,28 @@ DHCP Guarding も入れていない。VLAN 120 は対象外でよいが、機器
 | # | 内容 | 状態 |
 | --- | --- | --- |
 | 1 | `cluster-secrets` と、入口 Kustomization に復号を足す FluxInstance のパッチ | 書いた |
-| 2 | cert-manager と ClusterIssuer（staging と production） | 書いた。トークン待ち |
-| 3 | Gateway 本体と証明書 | |
-| 4 | cloudflared。ingress ルールの ConfigMap と NetworkPolicy を含む | Tunnel の認証情報待ち |
-| 5 | external-dns（Cloudflare 系統） | トークン待ち |
-| 6 | Flux の Webhook Receiver | |
+| 2 | cert-manager と ClusterIssuer（staging と production） | 書いた |
+| 3 | Gateway 本体と証明書 | 書いた |
+| 4 | cloudflared。ingress ルールは ConfigMap に置く | 書いた |
+| 5 | external-dns（Cloudflare 系統） | 書いた |
+| 6 | Flux の Webhook Receiver | トンネルの動作確認後 |
 
-こちらで用意できないものが3つ残っている。
+Cloudflare の API トークンとトンネルの認証情報は SOPS で暗号化して `kubernetes/` に置いた。
+トークンは `Zone:DNS:Edit` と `Zone:Zone:Read` を `kaeritei.com` だけに絞ってある。
+ACME のメールアドレスは使わない。Let's Encrypt は有効期限の通知メールを廃止しており、省略しても証明書は取れる。
 
-| 要るもの | 用途 |
-| --- | --- |
-| Cloudflare の API トークン | cert-manager の DNS-01 チャレンジと external-dns。`Zone:DNS:Edit` と `Zone:Zone:Read` を対象ゾーンだけに絞る |
-| Cloudflare Tunnel | `cloudflared tunnel create` で1つ作り、その認証情報 |
-| ACME のメールアドレス | Let's Encrypt のアカウント登録。省略しても証明書は取れる |
-
-トークンは SOPS で暗号化して `kubernetes/` に置き、Flux に復号させる。R6 で経路は通してある。
+**Gateway は internal と external の2本に分けた。**
+公開のスイッチを `HTTPRoute` の `parentRefs` に持たせるためである。
+external-dns（Cloudflare 系統）は `homelab/scope=external` の Gateway に繋がった `HTTPRoute` だけを見るため、そこに繋がないサービスは公開 DNS に載らない。
+internal は宅内からの経路で、TLS を Gateway 自身が終端する。
+external は Cloudflare Edge が TLS を終端するため listener は HTTP だけでよい。
 
 **証明書は staging で1回通してから production に切り替える。**
 Let's Encrypt の production はレート制限が厳しく、設定を誤ると週次の上限を使い切る。
+
+**cloudflared の egress を絞る NetworkPolicy は R7 に含めない。**
+Cilium の Gateway API はデータプレーンが Pod endpoint ではないため、`CiliumNetworkPolicy` で外部 Gateway だけを許可する書き方を確かめる必要がある。
+トンネルが通ることを確認したあとに、単独で検証して入れる。
 
 **Tunnel は CLI で作る。**
 Terraform への移行は R8 に置いた。CLI で作ったトンネルは後から import できるため、二重には作らない（[knowledge/terraform-provisioning.md](knowledge/terraform-provisioning.md)）。
