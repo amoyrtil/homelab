@@ -1,0 +1,31 @@
+# Flux 本体の構成。flux-operator がこれを読んでコントローラーを展開し、
+# Git の同期を始める。Flux 自身を Flux で管理できないため bootstrap 側に置く。
+---
+apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata:
+  name: flux
+  namespace: flux-system
+  annotations:
+    fluxcd.controlplane.io/reconcileEvery: 1h
+    fluxcd.controlplane.io/reconcileTimeout: 5m
+spec:
+  distribution:
+    version: 2.x
+    registry: ghcr.io/fluxcd
+  components:
+    - source-controller
+    - kustomize-controller
+    - helm-controller
+    - notification-controller
+  cluster:
+    type: kubernetes
+    networkPolicy: true
+  sync:
+    kind: GitRepository
+    url: https://github.com/amoyrtil/homelab.git
+    ref: refs/heads/main
+    path: kubernetes/flux/cluster
+    # リポジトリが public のため認証は要らない。private に変えるとき、または
+    # オーガナイゼーションへ移すときは、Secret を作って pullSecret で指す。
+    # 手順は docs/knowledge/flux-bootstrap.md にある。
