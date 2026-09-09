@@ -293,7 +293,7 @@ Talos の kubelet はコンテナで動くため、これがないと CSI が作
 
 - **OS**：Talos Linux。設定管理は talhelper（`talconfig.yaml`）
 - **CNI**：Cilium。kube-proxy を完全に置換し、eBPF モードで動かす。フェーズ1から入れる
-- **Ingress**：Cilium の Gateway API 実装を使う。専用の Ingress コントローラーを足さない。前提として `kubeProxyReplacement=true` と `l7Proxy=true` が要る
+- **Ingress**：Cilium の Gateway API 実装を使う。専用の Ingress コントローラーを足さない。前提として `kubeProxyReplacement=true` と `l7Proxy=true` が要る。Gateway は internal と external の2本立てる。公開のスイッチを `HTTPRoute` の `parentRefs` に持たせるためである（[knowledge/gateway-and-tunnel.md](knowledge/gateway-and-tunnel.md)）
 - **LoadBalancer**：Cilium BGP。UCG-Fiber は UniFi OS 4.1.13 以降で BGP に対応しており、FRR 形式の設定ファイルをアップロードして構成する（Settings → Routing → BGP）。LB IP は VLAN 120 から払い出す。ノードと同じ VLAN には置けない（[knowledge/service-exposure.md](knowledge/service-exposure.md)）
 - **外部公開**：Cloudflare Tunnel。ルーターのポートを開けない
 - **証明書**：cert-manager + Let's Encrypt。DNS-01 チャレンジに Cloudflare を使う

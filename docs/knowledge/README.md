@@ -18,6 +18,7 @@ homelab の構築過程で行った検証と、そこで得た知見の置き場
 | [longhorn-on-talos.md](longhorn-on-talos.md) | R5 の記録。Longhorn をワーカーにのみ展開し、レプリカ1で PVC を通すまで。Talos 側に要る kubelet の bind mount と、コントロールプレーンを外す方法 | 2026年9月9日 |
 | [flux-bootstrap.md](flux-bootstrap.md) | R6 の記録。Flux Operator を入れ、Longhorn を GitOps へ移し、SOPS で暗号化した Secret を Flux に復号させるまで。手で入れる鍵をどこで切るか | 2026年9月9日 |
 | [terraform-provisioning.md](terraform-provisioning.md) | R8 の着手前に調べた provider の実力。UniFi と Cloudflare の provider が Zone-Based Firewall と Tunnel をどこまで扱えるか、手で作った既存リソースを import で回収できるか。Terraform と Flux と external-dns の所有権の境界もここで決めた | 2026年9月9日 |
+| [gateway-and-tunnel.md](gateway-and-tunnel.md) | R7 の記録。cert-manager で証明書を取り、Gateway を internal と external の2本に分け、Cloudflare Tunnel と external-dns を通して同じ URL を宅内とインターネットの両方から届かせるまで | 2026年9月9日 |
 
 ## 横断的な知見
 
@@ -51,3 +52,7 @@ homelab の構築過程で行った検証と、そこで得た知見の置き場
 - **Cloudflare の Tunnel は CLI で作っても import できる。** `tunnel_secret` は provider の入力属性で、その値は `cloudflared tunnel create` が書く credentials ファイルに残っている。
 - **Terraform の state はクラスター内に置けない。** クラスターの前提となるネットワークを Terraform が作るため循環依存になる。Cloudflare R2 に置く。
 - **Cloudflare のサービス用 DNS レコードは external-dns の所有物である。** Terraform が同じ名前を握ると互いに消し合う。Terraform が持つのは apex や MX のように external-dns が触らないものだけ。
+- **公開のスイッチは `HTTPRoute` の `parentRefs` に持たせる。** external Gateway に繋がったものだけを external-dns（Cloudflare 系統）に見せれば、繋がないサービスは公開 DNS に載らない。
+- **external-dns の `--default-targets` では target を上書きできない。** `gateway-httproute` ソースは Gateway のアドレスを出すため、Gateway 側の `external-dns.alpha.kubernetes.io/target` アノテーションを使う。
+- **external-dns に `txtPrefix` を付けないと CNAME と TXT が衝突する。** 同じ名前に両方を置けない。
+- **DNS-01 の自己確認には権威 DNS を直接引かせる。** split-horizon の宅内では内部 DNS が自分の置いた TXT を返さない。

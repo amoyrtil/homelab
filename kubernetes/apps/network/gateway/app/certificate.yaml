@@ -2,8 +2,8 @@
 # DNS-01 チャレンジは外部からの到達性を要求しないので、内部専用の
 # ホスト名でもワイルドカードで1枚取れる。
 #
-# issuerRef は staging から始める。production に切り替えるのは、
-# チャレンジが通ることを確認したあとである。
+# staging で1回通したうえで production に切り替えた。
+# staging での発行は 2026年9月9日に確認している。
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
@@ -14,7 +14,7 @@ spec:
   secretName: wildcard-tls
   issuerRef:
     kind: ClusterIssuer
-    name: letsencrypt-staging
+    name: letsencrypt-production
   dnsNames:
     - "${SECRET_DOMAIN}"
     - "*.${SECRET_DOMAIN}"

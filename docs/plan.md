@@ -10,8 +10,8 @@ homelab に Kubernetes クラスターと GitOps ベースの CI/CD を整備す
 
 ## 現在地
 
-**リハーサル（手順2）の R7 に着手した。**
-手順1から5までマニフェストを書き、main へのマージを待っている。
+**リハーサル（手順2）の R7 は手順5まで検証済み。**
+手順6（Flux の Webhook Receiver）と証明書の production 切り替えが main へのマージを待っている。
 最終更新は 2026年9月9日である。
 
 ### いまのクラスターの状態
@@ -30,6 +30,9 @@ homelab に Kubernetes クラスターと GitOps ベースの CI/CD を整備す
 `CiliumL2AnnouncementPolicy` は R4 で削除した。
 Longhorn 1.12.1 が `longhorn-system` に入っており、worker-1 のみに展開されている。
 Flux が `flux-system` で動き、`kubernetes/` 以下を同期している。Longhorn はその管理下にある。
+cert-manager 1.21.1 が `cert-manager` に入り、Let's Encrypt の ClusterIssuer を staging と production の2本持っている。
+`network` には Gateway が2本（internal が `192.168.120.101`、external が `192.168.120.100`）、cloudflared、external-dns の Cloudflare 系統が入っている。
+ワイルドカード証明書は `network` の `wildcard-tls` にある。
 検証に使ったリソースは削除済みで、`default` namespace は空である。
 
 **手でクラスターに入れたものは3つある。**
@@ -74,7 +77,7 @@ DHCP Guarding も入れていない。VLAN 120 は対象外でよいが、機器
 | 3 | Gateway 本体と証明書 | 書いた |
 | 4 | cloudflared。ingress ルールは ConfigMap に置く | 書いた |
 | 5 | external-dns（Cloudflare 系統） | 書いた |
-| 6 | Flux の Webhook Receiver | トンネルの動作確認後 |
+| 6 | Flux の Webhook Receiver | 書いた。マージ待ち |
 
 Cloudflare の API トークンとトンネルの認証情報は SOPS で暗号化して `kubernetes/` に置いた。
 トークンは `Zone:DNS:Edit` と `Zone:Zone:Read` を `kaeritei.com` だけに絞ってある。
@@ -88,6 +91,7 @@ external は Cloudflare Edge が TLS を終端するため listener は HTTP だ
 
 **証明書は staging で1回通してから production に切り替える。**
 Let's Encrypt の production はレート制限が厳しく、設定を誤ると週次の上限を使い切る。
+staging での発行を確認したため、`Certificate` の `issuerRef` は production に変えた。
 
 **cloudflared の egress を絞る NetworkPolicy は R7 に含めない。**
 Cilium の Gateway API はデータプレーンが Pod endpoint ではないため、`CiliumNetworkPolicy` で外部 Gateway だけを許可する書き方を確かめる必要がある。
@@ -142,7 +146,7 @@ R1 から R4 までで踏んだ落とし穴は、**いずれも Cilium 側にあ
 - [x] **R4: Cilium BGP を UCG-Fiber と対向させる**（2026年9月9日 完了）
 - [x] **R5: Longhorn をワーカーにのみ展開する**（2026年9月9日 完了）
 - [x] **R6: Flux Operator と SOPS**（2026年9月9日 完了）
-- [ ] **R7: cert-manager、Cloudflare Tunnel、external-dns**（Cloudflare の API トークンと Tunnel の認証情報が要る）
+- [ ] **R7: cert-manager、Cloudflare Tunnel、external-dns**（手順5まで検証済み。残りは Webhook Receiver）
 - [ ] **R8: UniFi と Cloudflare を Terraform に移す**（未着手の VLAN から始め、既存リソースを import で回収する）
 
 R1 から R3 が山場である。
@@ -289,6 +293,35 @@ private 化やオーガナイゼーションへの移行のときに2つ目が�
 ボリュームがある状態で行うとデータが消えるため、移行の前に0本であることを確かめる。
 
 詳細は [knowledge/flux-bootstrap.md](knowledge/flux-bootstrap.md) にある。
+
+**R7 の結果（2026年9月9日、cert-manager 1.21.1、external-dns 0.21.0、cloudflared 2026.8.3）**
+
+| 確認項目 | 結果 |
+| --- | --- |
+| ClusterIssuer | staging と production の両方が `Ready` |
+| DNS-01 チャレンジ | `kaeritei.com` と `*.kaeritei.com` の2本とも `valid` |
+| 証明書 | staging で発行。SAN は `*.kaeritei.com` と `kaeritei.com` |
+| Gateway | internal `192.168.120.101`、external `192.168.120.100`。両方 `PROGRAMMED: True` |
+| トンネル | コネクション4本を `nrt10` `nrt12` `nrt14` `nrt15` に登録 |
+| external に繋いだ HTTPRoute | インターネットから連続5回すべて `HTTP 200` |
+| internal だけに繋いだ HTTPRoute | 公開 DNS に載らない。LAN 内からは `HTTP 200` |
+| LAN 内の TLS | Gateway がワイルドカード証明書を出す |
+| HTTP から HTTPS へ | `301` |
+| HTTPRoute の削除 | CNAME と TXT が消える |
+| 未登録のホスト名 | Cloudflare Edge が `530` で落とす |
+
+**公開のスイッチは `HTTPRoute` の `parentRefs` である。**
+external-dns（Cloudflare 系統）は `homelab/scope=external` の Gateway に繋がった `HTTPRoute` だけを見る。
+external に繋がなければ公開 DNS にレコードが作られず、インターネットからは名前解決の段階で届かない。
+
+**external-dns の `--default-targets` では target を上書きできない。**
+このフラグはソースが target を出さなかった場合にしか効かず、`gateway-httproute` ソースは Gateway のアドレスを出す。
+external Gateway に `external-dns.alpha.kubernetes.io/target` アノテーションを付ける方法で解決した。
+
+**`txtPrefix` を付けないと CNAME と TXT が衝突する。**
+同じ名前に両方を置けないためである。
+
+詳細は [knowledge/gateway-and-tunnel.md](knowledge/gateway-and-tunnel.md) にある。
 
 ## 構築の作業
 

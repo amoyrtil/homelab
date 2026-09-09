@@ -1,0 +1,24 @@
+# GitHub の push を直接受け、GitRepository の取得を即座に走らせる。
+# これがないと反映は FluxInstance の間隔（1時間）待ちになる。
+#
+# 受け口を外に出す必要があるため Cloudflare Tunnel が前提になる。
+# 公開しても差し支えないのは、パスが推測できない hash であり、
+# かつ本文の HMAC 署名を notification-controller が検証するためである。
+---
+apiVersion: notification.toolkit.fluxcd.io/v1
+kind: Receiver
+metadata:
+  name: github
+  namespace: flux-system
+spec:
+  type: github
+  events:
+    - ping
+    - push
+  secretRef:
+    name: github-webhook-token
+  resources:
+    - apiVersion: source.toolkit.fluxcd.io/v1
+      kind: GitRepository
+      name: flux-system
+      namespace: flux-system
