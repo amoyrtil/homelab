@@ -1,0 +1,50 @@
+# cloudflared はインターネットからクラスターへ入る唯一の中継点である。
+# Pod のプロセスが乗っ取られた場合の横移動を止めるため、egress を絞る。
+# Cilium は egress ルールを1つでも書くと既定拒否になるので、許すものだけを並べる。
+#
+# 防げるのは cloudflared 自身が侵入されたときの横移動である。
+# ConfigMap や Git を書ける相手には効かない。そちらは同じ場所にあるこの
+# ポリシーも書き換えられる。
+#
+# **外部 Gateway 宛のルールは書けない。**
+# Cilium Gateway 宛の通信は socket LB がローカルの Envoy へ折り返すため、
+# egress ポリシーの評価を通らない。ルールを書いても書かなくても届く。
+# したがって cloudflared が internal Gateway へ届くことは、このポリシーでは
+# 防げない。実測の詳細は docs/knowledge/gateway-and-tunnel.md にある。
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: cloudflared
+  namespace: network
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: cloudflared
+  egress:
+    # クラスター DNS。Edge のホスト名と Gateway の Service 名を解決する。
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+    # Cloudflare Edge。QUIC で UDP、フォールバックの HTTP/2 で TCP を使う。
+    # ポートは 443 ではなく 7844 である。
+    #
+    # 443 は開けない。開けなくてもトンネルは4本張れる。
+    # 起動時の precheck が api.cloudflare.com:443 に届かず fail と出るが、
+    # hard_fail=false であり動作には影響しない。
+    # 世界中の HTTPS へ出られる経路を残さないほうを採る。
+    - toEntities:
+        - world
+      toPorts:
+        - ports:
+            - port: "7844"
+              protocol: UDP
+            - port: "7844"
+              protocol: TCP

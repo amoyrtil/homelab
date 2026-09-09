@@ -108,10 +108,9 @@ cloudflared はこれを宛先にする。
 **未登録のホスト名は cloudflared に届かない。**
 Cloudflare Edge が `530` を返して落とすため、末尾の `404` は保険として残る。
 
-**precheck は `region2` で失敗する。**
-`region1.v2.argotunnel.com` への QUIC と HTTP/2 は成功し、`region2` は両方失敗する。
-コネクション4本は正常に登録され、通信にも影響はない。
-UCG-Fiber 側で `region2` の宛先が塞がれている可能性があるが、追っていない。
+**`region2` の precheck 失敗は一時的なものだった。**
+初回の起動では `region2.v2.argotunnel.com` への QUIC と HTTP/2 が両方失敗したが、後の起動では両方成功している。
+経路の問題ではない。
 
 ## Flux の Webhook Receiver
 
@@ -148,17 +147,66 @@ Cloudflare のゾーンは SOA の最小 TTL が 1800 秒である。
 external-dns の同期（既定 1分間隔）より先に名前を引くと、宅内のリゾルバが最大 30 分そのネガティブ応答を返し続ける。
 外部から確認するときは `dig @1.1.1.1` で権威側を引き、`curl` には `--resolve` を渡す。
 
+## cloudflared の egress を絞る
+
+**Edge へのポートは 443 ではなく 7844 である。**
+`world` 宛の 443 だけを許して 7844 を落とすと、`failed to dial to edge with quic: timeout: no recent network activity` でコネクションが切れる。
+Hubble には `world:7844 (UDP) Policy denied DROPPED` が残る。
+
+**443 は開けなくてよい。**
+7844 だけでコネクションは4本張れる。
+起動時の precheck が `api.cloudflare.com:443` に届かず `status=fail` と出るが、`hard_fail=false` であり動作に影響しない。
+locally-managed のトンネルは設定を Cloudflare API から取らないためである。
+世界中の HTTPS へ出られる経路を残さないほうを採った。
+
+**Cilium Gateway 宛の通信は egress ポリシーの評価を通らない。**
+これが一番効いた発見である。
+`toServices` でも `toCIDRSet` でも、外部 Gateway だけを許して内部 Gateway を落とすことはできない。
+ルールを1つも書かなくても両方の Gateway に届く。
+
+確かめ方は、cloudflared と同じラベルを付けた probe Pod を置き、ポリシーの効いた状態で宛先を変えて叩くことである。
+
+```
+外部 Gateway の ClusterIP : 404   （Gateway に到達）
+外部 Gateway の LB IP     : 404
+内部 Gateway の LB IP     : 404   ← 許していないのに届く
+external-dns の ClusterIP : 000   （拒否）
+Kubernetes API 10.96.0.1  : 000   （拒否）
+```
+
+Gateway 以外は正しく拒否される。
+つまりポリシーは効いており、Gateway 宛だけが評価の前に socket LB でローカルの Envoy へ折り返されている。
+
+`toServices` を試した最初の案が通ったように見えたのは、ルールが効いたからではない。
+両方の Gateway の EndpointSlice がどちらも `192.192.192.192` という Cilium のダミーを1つ持つだけで、実体の Pod がないためである。
+
+**残る露出。**
+cloudflared が乗っ取られた場合、内部 Gateway の背後にある内部専用のサービスへは届く。
+ポリシーで塞げないため、内部向けにも認証を置くかどうかの判断に回る。
+これは [service-exposure.md](service-exposure.md) の「Cloudflare Access と WAF は LAN 内から効かない」で残した論点と同じものである。
+
+Pod、ClusterIP、Kubernetes API、ノードへの到達は塞げている。
+`automountServiceAccountToken: false` で Kubernetes の認証情報も持たないため、侵入後にできることは内部 Gateway 経由の HTTP に限られる。
+
+## Cloudflare の WAF が Webhook を落とすことがある
+
+署名のない POST を短時間に何度も投げたあと、`flux-webhook` への配送が Cloudflare の段階で `403 Access denied` になった。
+`Server=cloudflare` が付き、notification-controller には何も届かない。
+トンネルが healthy な状態でも起きる。
+
+GitHub からの配送も同じく `403` になるため、**GitOps の反映が黙って止まる**。
+どのルールが落としているかは Cloudflare の Security Events でしか分からない。
+DNS 権限だけのトークンでは読めない。
+
+対処は WAF の skip ルールを webhook のパスに置くことである。
+R8 で Cloudflare を Terraform に移すとき、`cloudflare_ruleset` の管理対象に含める。
+
 ## 未回収
+
 
 **HTTP から HTTPS へのリダイレクトに `:443` が付く。**
 `RequestRedirect` フィルターにポートを書いていないが、Cilium は `https://foo.example.com:443/` を返す。
 動作に問題はないが、リダイレクト先の URL としては冗長である。
 
-**cloudflared の egress を絞る NetworkPolicy を入れていない。**
-Cilium の Gateway API はデータプレーンが Pod endpoint ではなく、Envoy がノード上で受ける。
-`CiliumNetworkPolicy` の `toEndpoints` で外部 Gateway を選べないため、`toServices` か CIDR で書くことになる。
-書き方を単独で検証してから入れる。
-
-これがないと、cloudflared の Pod はクラスター内の任意のアドレスへプロキシできる状態にある。
-トンネルの資格情報が漏れた場合に攻撃者が得るのは「自分でトンネルを動かせること」であって、クラスターへの侵入経路ではない。
-危ないのは cloudflared 自身が中継器として使えることのほうである。
+**Cloudflare の WAF ルールを Terraform の管理下に置いていない。**
+webhook のパスに skip ルールが要る。R8 で回収する。
