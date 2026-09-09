@@ -163,13 +163,23 @@ SOPS の復号設定は、共有の kustomize component を挟まず各 `ks.yaml
 | SOPS の復号 | Git 上の暗号化 Secret がクラスターで平文になる |
 | prune | Git から消すとクラスターからも消える |
 
-## R7 に持ち越すもの
+## リポジトリを移すときに更新するもの
 
-**Webhook Receiver。**
-GitHub の push を Flux が直接受ける構成にするには、受け口を外に出す必要がある。
-Cloudflare Tunnel を入れる R7 で行う。
-それまでは `GitRepository` のポーリング（既定 1分）で反映される。
+リポジトリを別の名前に変える、オーガナイゼーションへ移す、private にする、のいずれでも更新が要る箇所がある。
+どれも移動そのものでは壊れず、次に Flux が同期するときや次に push したときに黙って効かなくなる。
 
-**`FluxInstance` の同期先。**
-検証のあいだは作業ブランチを指し、マージ後に `refs/heads/main` へ戻した。
-リポジトリをオーガナイゼーションへ移す場合は、この URL も変える。
+| 対象 | 何を変えるか |
+| --- | --- |
+| `bootstrap/flux-instance.yaml` の `sync.url` | 新しいリポジトリを指す。`FluxInstance` は手で適用するため、Flux 自身では追随しない |
+| GitHub の webhook | hook はリポジトリごとに持つため、移動先で作り直す。`Receiver` のパスは変わらないので URL は同じでよい |
+| `.github/workflows/approve-pr-from-owner.yaml` | `github.repository_owner` と PR 作成者の login を比較している。オーガナイゼーションへ移すと両者が一致しなくなり、自動承認が止まる |
+| `docs/` 内の GitHub URL | 本文からリンクしている箇所 |
+
+private にする場合は、これに加えて Git 認証用の Secret を作り、`sync.pullSecret` で指す。
+手でクラスターに入れる鍵が `sops-age` の1つで済まなくなり、2つ目が増える。
+
+## R7 で回収したもの
+
+**Webhook Receiver を入れた。**
+GitHub の push を Cloudflare Tunnel 経由で受け、`GitRepository` の取得を即座に走らせる。
+記録は [gateway-and-tunnel.md](gateway-and-tunnel.md) にある。

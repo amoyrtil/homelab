@@ -113,6 +113,41 @@ Cloudflare Edge が `530` を返して落とすため、末尾の `404` は保�
 コネクション4本は正常に登録され、通信にも影響はない。
 UCG-Fiber 側で `region2` の宛先が塞がれている可能性があるが、追っていない。
 
+## Flux の Webhook Receiver
+
+GitHub の push を受け、`GitRepository` の取得を即座に走らせる。
+受け口は external Gateway に繋ぎ、パスを `/hook/` に絞る。
+`Receiver` の `status.webhookPath` が `/hook/<sha256>` を返し、これが webhook の URL になる。
+
+**flux-operator の NetworkPolicy が Gateway 経由の要求を落とす。**
+`cluster.networkPolicy: true` で入る `allow-webhooks` は、ingress の `from` を `namespaceSelector` に限っている。
+Cilium から見て Gateway 経由の要求は Pod ではなく world の identity を持つため、この条件に当たらない。
+
+症状は Gateway が `503` を返すことである。
+`/hook/` 以外のパスは `404` になり、Pod から Service を直接叩くと `400`（署名なしの正しい応答）が返る。
+つまり経路もルーティングも正しく、backend への接続だけが落ちている。
+internal と external の両方で `503` になることが、トンネル側の問題ではない証拠になった。
+
+`from` を書かない NetworkPolicy を1つ足して解消した。
+
+```yaml
+spec:
+  podSelector:
+    matchLabels:
+      app: notification-controller
+  policyTypes: [Ingress]
+  ingress:
+    - ports: [{ protocol: TCP, port: 9292 }]
+```
+
+公開しても差し支えないのは、パスが推測できない hash であり、本文の HMAC 署名を notification-controller が検証するためである。
+GitHub が hook 作成時に送る `ping` が `200 OK` で通り、`GitRepository/flux-system` に annotation が付くところまで確認した。
+
+**レコードを作った直後の確認では NXDOMAIN のネガティブキャッシュを踏む。**
+Cloudflare のゾーンは SOA の最小 TTL が 1800 秒である。
+external-dns の同期（既定 1分間隔）より先に名前を引くと、宅内のリゾルバが最大 30 分そのネガティブ応答を返し続ける。
+外部から確認するときは `dig @1.1.1.1` で権威側を引き、`curl` には `--resolve` を渡す。
+
 ## 未回収
 
 **HTTP から HTTPS へのリダイレクトに `:443` が付く。**

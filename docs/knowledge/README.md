@@ -56,3 +56,6 @@ homelab の構築過程で行った検証と、そこで得た知見の置き場
 - **external-dns の `--default-targets` では target を上書きできない。** `gateway-httproute` ソースは Gateway のアドレスを出すため、Gateway 側の `external-dns.alpha.kubernetes.io/target` アノテーションを使う。
 - **external-dns に `txtPrefix` を付けないと CNAME と TXT が衝突する。** 同じ名前に両方を置けない。
 - **DNS-01 の自己確認には権威 DNS を直接引かせる。** split-horizon の宅内では内部 DNS が自分の置いた TXT を返さない。
+- **flux-operator の `allow-webhooks` は Gateway 経由の要求を落とす。** ingress の `from` を `namespaceSelector` に限っており、Cilium から見て world の identity を持つ要求が当たらない。`from` を書かない NetworkPolicy を1つ足す。
+- **DNS レコードを作った直後の確認は NXDOMAIN のネガティブキャッシュを踏む。** Cloudflare の SOA は最小 TTL が 1800 秒であり、external-dns の同期より先に引くと最大 30 分そのまま返る。
+- **リポジトリを移すと4箇所が黙って効かなくなる。** `FluxInstance` の `sync.url`、GitHub の webhook、自動承認のワークフロー、docs 内の URL である。

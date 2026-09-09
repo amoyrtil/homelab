@@ -10,8 +10,7 @@ homelab に Kubernetes クラスターと GitOps ベースの CI/CD を整備す
 
 ## 現在地
 
-**リハーサル（手順2）の R7 は手順5まで検証済み。**
-手順6（Flux の Webhook Receiver）と証明書の production 切り替えが main へのマージを待っている。
+**リハーサル（手順2）の R7 まで完了。次は R8。**
 最終更新は 2026年9月9日である。
 
 ### いまのクラスターの状態
@@ -32,7 +31,8 @@ Longhorn 1.12.1 が `longhorn-system` に入っており、worker-1 のみに展
 Flux が `flux-system` で動き、`kubernetes/` 以下を同期している。Longhorn はその管理下にある。
 cert-manager 1.21.1 が `cert-manager` に入り、Let's Encrypt の ClusterIssuer を staging と production の2本持っている。
 `network` には Gateway が2本（internal が `192.168.120.101`、external が `192.168.120.100`）、cloudflared、external-dns の Cloudflare 系統が入っている。
-ワイルドカード証明書は `network` の `wildcard-tls` にある。
+ワイルドカード証明書は `network` の `wildcard-tls` にあり、Let's Encrypt の production で取っている。
+Flux の `Receiver` が `flux-system` にあり、GitHub の push をトンネル経由で受ける。
 検証に使ったリソースは削除済みで、`default` namespace は空である。
 
 **手でクラスターに入れたものは3つある。**
@@ -62,56 +62,30 @@ DHCP Guarding も入れていない。VLAN 120 は対象外でよいが、機器
 
 ### 次にやること
 
-**R7: cert-manager、Cloudflare Tunnel、external-dns（Cloudflare 系統のみ）。**
+**R8: UniFi と Cloudflare を Terraform に移す。**
 
-対象ドメインは `kaeritei.com` である。
-ゾーンは Cloudflare に委任済みで、`cheryl.ns.cloudflare.com` と `mark.ns.cloudflare.com` が権威応答を返す。
-リポジトリが public のため、ドメイン名は SOPS で暗号化した `cluster-secrets` に置き、各 Kustomization の `postBuild` で `${SECRET_DOMAIN}` として展開する。
+未着手の VLAN 10、30、40、50、60 から始める。
+既存の状態と突き合わせずに provider の挙動を確かめられるためである。
+そのうえで VLAN 20、VLAN 120、`Blackwall-BGP`、Cloudflare Tunnel を import で回収する。
 
-手順を6段に分けた。
+state は Cloudflare R2 に置く。
+着手前に決めることが1つ残っている。Terraform の実行場所と認証情報の渡し方である。
 
-| # | 内容 | 状態 |
-| --- | --- | --- |
-| 1 | `cluster-secrets` と、入口 Kustomization に復号を足す FluxInstance のパッチ | 書いた |
-| 2 | cert-manager と ClusterIssuer（staging と production） | 書いた |
-| 3 | Gateway 本体と証明書 | 書いた |
-| 4 | cloudflared。ingress ルールは ConfigMap に置く | 書いた |
-| 5 | external-dns（Cloudflare 系統） | 書いた |
-| 6 | Flux の Webhook Receiver | 書いた。マージ待ち |
+調査の記録は [knowledge/terraform-provisioning.md](knowledge/terraform-provisioning.md) にある。
+`unifi_firewall_policy` の `index` が read-only であり、ポリシーの順序を Terraform から管理できない点に注意する。
 
-Cloudflare の API トークンとトンネルの認証情報は SOPS で暗号化して `kubernetes/` に置いた。
-トークンは `Zone:DNS:Edit` と `Zone:Zone:Read` を `kaeritei.com` だけに絞ってある。
-ACME のメールアドレスは使わない。Let's Encrypt は有効期限の通知メールを廃止しており、省略しても証明書は取れる。
+**R7 から持ち越した作業が2つある。**
 
-**Gateway は internal と external の2本に分けた。**
-公開のスイッチを `HTTPRoute` の `parentRefs` に持たせるためである。
-external-dns（Cloudflare 系統）は `homelab/scope=external` の Gateway に繋がった `HTTPRoute` だけを見るため、そこに繋がないサービスは公開 DNS に載らない。
-internal は宅内からの経路で、TLS を Gateway 自身が終端する。
-external は Cloudflare Edge が TLS を終端するため listener は HTTP だけでよい。
-
-**証明書は staging で1回通してから production に切り替える。**
-Let's Encrypt の production はレート制限が厳しく、設定を誤ると週次の上限を使い切る。
-staging での発行を確認したため、`Certificate` の `issuerRef` は production に変えた。
-
-**cloudflared の egress を絞る NetworkPolicy は R7 に含めない。**
-Cilium の Gateway API はデータプレーンが Pod endpoint ではないため、`CiliumNetworkPolicy` で外部 Gateway だけを許可する書き方を確かめる必要がある。
-トンネルが通ることを確認したあとに、単独で検証して入れる。
-
-**Tunnel は CLI で作る。**
-Terraform への移行は R8 に置いた。CLI で作ったトンネルは後から import できるため、二重には作らない（[knowledge/terraform-provisioning.md](knowledge/terraform-provisioning.md)）。
-
-**external-dns の Pi-hole 系統は R7 の範囲外とする。**
-内部 DNS が待機系を持たないうちに宅内の名前解決をクラスターに寄せると、クラスターの停止が家中に波及する。
-着手の条件はフェーズ1の作業項目に書いた。
-
-Flux の Webhook Receiver を R7 に含めるのは、GitHub の push を直接受けるには受け口を外に出す必要があり、Cloudflare Tunnel が前提になるためである。
-それまではポーリングで反映される。
+| 内容 | R7 に入れなかった理由 |
+| --- | --- |
+| cloudflared の egress を絞る `CiliumNetworkPolicy` | Cilium の Gateway API はデータプレーンが Pod endpoint ではないため、外部 Gateway だけを許可する書き方を単独で検証する必要がある |
+| external-dns の Pi-hole 系統 | 内部 DNS が待機系を持たないうちに宅内の名前解決をクラスターへ寄せると、クラスターの停止が家中に波及する。着手の条件はフェーズ1の作業項目にある |
 
 ### 作業の進め方
 
 - [x] **1. テンプレートの評価** — `onedr0p/cluster-template` を採用するか判断する。記録は [knowledge/cluster-template-evaluation.md](knowledge/cluster-template-evaluation.md)
-- [ ] **2. リハーサル** — いま動いているクラスターで、フェーズ1の構成を通す。R1 から R6 まで完了し、R7 に着手した。詳細は「[リハーサル](#リハーサル)」節
-- [ ] **3. 知見の集約** — 2 の結果を `knowledge/` に記録する。R1 から R6 の分は [knowledge/](knowledge/) に反映済み
+- [ ] **2. リハーサル** — いま動いているクラスターで、フェーズ1の構成を通す。R1 から R7 まで完了。詳細は「[リハーサル](#リハーサル)」節
+- [ ] **3. 知見の集約** — 2 の結果を `knowledge/` に記録する。R1 から R7 の分は [knowledge/](knowledge/) に反映済み
 - [ ] **4. 規約の整備** — 命名規則など homelab 全体のルールを決め、プロジェクトルートの `CLAUDE.md` を更新する
 - [ ] **5. フェーズ1の構築** — EliteDesk 到着後、クラスターを本番として組み直す。UniFi と Cloudflare は R8 で書いた Terraform の構成をそのまま使う
 
@@ -146,7 +120,7 @@ R1 から R4 までで踏んだ落とし穴は、**いずれも Cilium 側にあ
 - [x] **R4: Cilium BGP を UCG-Fiber と対向させる**（2026年9月9日 完了）
 - [x] **R5: Longhorn をワーカーにのみ展開する**（2026年9月9日 完了）
 - [x] **R6: Flux Operator と SOPS**（2026年9月9日 完了）
-- [ ] **R7: cert-manager、Cloudflare Tunnel、external-dns**（手順5まで検証済み。残りは Webhook Receiver）
+- [x] **R7: cert-manager、Cloudflare Tunnel、external-dns**（2026年9月9日 完了）
 - [ ] **R8: UniFi と Cloudflare を Terraform に移す**（未着手の VLAN から始め、既存リソースを import で回収する）
 
 R1 から R3 が山場である。
@@ -309,6 +283,8 @@ private 化やオーガナイゼーションへの移行のときに2つ目が�
 | HTTP から HTTPS へ | `301` |
 | HTTPRoute の削除 | CNAME と TXT が消える |
 | 未登録のホスト名 | Cloudflare Edge が `530` で落とす |
+| 証明書の production 切り替え | 再発行され、issuer が `(STAGING)` でなくなる |
+| Webhook Receiver | GitHub の `ping` が `200 OK`。`GitRepository` に annotation が付く |
 
 **公開のスイッチは `HTTPRoute` の `parentRefs` である。**
 external-dns（Cloudflare 系統）は `homelab/scope=external` の Gateway に繋がった `HTTPRoute` だけを見る。
@@ -320,6 +296,10 @@ external Gateway に `external-dns.alpha.kubernetes.io/target` アノテーシ�
 
 **`txtPrefix` を付けないと CNAME と TXT が衝突する。**
 同じ名前に両方を置けないためである。
+
+**flux-operator の NetworkPolicy が Gateway 経由の要求を落とす。**
+`cluster.networkPolicy: true` で入る `allow-webhooks` は ingress の `from` を `namespaceSelector` に限っており、Cilium から見て world の identity を持つ Gateway 経由の要求が当たらない。
+Gateway が `503` を返す。`from` を書かない NetworkPolicy を1つ足して解消した。
 
 詳細は [knowledge/gateway-and-tunnel.md](knowledge/gateway-and-tunnel.md) にある。
 
@@ -385,6 +365,7 @@ Backup DNS はクラスターと無関係に建てられるので、順番を入
 
 構築の本筋から外れるが、放置しないもの。
 
+- [ ] **リポジトリを移すときの更新箇所**：名前の変更、オーガナイゼーションへの移動、private 化のいずれでも、`FluxInstance` の `sync.url`、GitHub の webhook、自動承認のワークフロー、docs 内の URL に更新が要る。移動そのものでは壊れず、次の同期や次の push で黙って効かなくなる。一覧は [knowledge/flux-bootstrap.md](knowledge/flux-bootstrap.md) にある
 - [ ] **スイッチポートの VLAN 割り当てを記録する**：どのポートを VLAN 20 にしたかの記録がなく、MS-03 の投入時に一度つまずいた
 - [ ] **10GbE で DS923+ との実効スループットを測る**：DS923+ を VLAN 20 に載せてから
 - [ ] **Pi-hole の冗長化**：クラスター内の Pi-hole を primary、Raspberry Pi 3 を replica として `nebula-sync` で設定を同期する。Pi-hole v6 では Gravity Sync も Orbital Sync も動かず、`nebula-sync` が現行の解になる。両方が v6 である必要がある。external-dns が書く Custom DNS のレコードは同期対象に含める。含めないと replica がクラスター上のサービス名を解決できず、待機系として機能しない（[knowledge/service-exposure.md](knowledge/service-exposure.md)）。あわせて DHCP で primary と secondary の両方を配る
