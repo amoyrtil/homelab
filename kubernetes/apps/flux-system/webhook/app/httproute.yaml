@@ -1,0 +1,27 @@
+# 受け口は external にも繋ぐ。GitHub から届く必要があるため、
+# ここは公開が目的である。
+# パスを /hook/ に絞り、Gateway より手前で他のパスを落とす。
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: flux-webhook
+  namespace: flux-system
+spec:
+  parentRefs:
+    - name: internal
+      namespace: network
+      sectionName: https
+    - name: external
+      namespace: network
+      sectionName: http
+  hostnames:
+    - "flux-webhook.${SECRET_DOMAIN}"
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /hook/
+      backendRefs:
+        - name: webhook-receiver
+          port: 80
