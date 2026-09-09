@@ -1,0 +1,20 @@
+# LAN 内アクセスは Cloudflare を通らないため、Gateway 自身が証明書を出す。
+# DNS-01 チャレンジは外部からの到達性を要求しないので、内部専用の
+# ホスト名でもワイルドカードで1枚取れる。
+#
+# issuerRef は staging から始める。production に切り替えるのは、
+# チャレンジが通ることを確認したあとである。
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wildcard
+  namespace: network
+spec:
+  secretName: wildcard-tls
+  issuerRef:
+    kind: ClusterIssuer
+    name: letsencrypt-staging
+  dnsNames:
+    - "${SECRET_DOMAIN}"
+    - "*.${SECRET_DOMAIN}"

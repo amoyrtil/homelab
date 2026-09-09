@@ -1,0 +1,38 @@
+# Let's Encrypt の DNS-01 チャレンジを Cloudflare で解く。
+# HTTP-01 と違い外部からの到達性を要求しないため、内部専用のホスト名でも
+# 証明書が取れる。LAN 内アクセスは Cloudflare を通らないので、これが要る。
+#
+# staging で1回通してから production に切り替える。
+# production はレート制限が厳しく、設定を誤ると週次の上限を焼く。
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-staging
+    solvers:
+      - dns01:
+          cloudflare:
+            apiTokenSecretRef:
+              name: cloudflare-token
+              key: api-token
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-production
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-production
+    solvers:
+      - dns01:
+          cloudflare:
+            apiTokenSecretRef:
+              name: cloudflare-token
+              key: api-token

@@ -29,3 +29,17 @@ spec:
     # リポジトリが public のため認証は要らない。private に変えるとき、または
     # オーガナイゼーションへ移すときは、Secret を作って pullSecret で指す。
     # 手順は docs/knowledge/flux-bootstrap.md にある。
+  # flux-operator が生成する入口の Kustomization にパッチを当てる。
+  # 既定では復号の設定が付かず、kubernetes/flux/cluster に置いた
+  # cluster-secrets が平文にならないまま配下へ渡らない。
+  kustomize:
+    patches:
+      - target:
+          kind: Kustomization
+        patch: |
+          - op: add
+            path: /spec/decryption
+            value:
+              provider: sops
+              secretRef:
+                name: sops-age

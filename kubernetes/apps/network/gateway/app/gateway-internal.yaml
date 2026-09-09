@@ -1,0 +1,49 @@
+# 宅内からの経路。LB IP を内部 DNS に載せ、クライアントが直接叩く。
+# 公開するかどうかに関わらず、すべての HTTPRoute はこちらに繋ぐ。
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: internal
+  namespace: network
+  labels:
+    homelab/scope: internal
+spec:
+  gatewayClassName: cilium
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      hostname: "*.${SECRET_DOMAIN}"
+      allowedRoutes:
+        namespaces:
+          from: All
+    - name: https
+      protocol: HTTPS
+      port: 443
+      hostname: "*.${SECRET_DOMAIN}"
+      tls:
+        certificateRefs:
+          - kind: Secret
+            name: wildcard-tls
+      allowedRoutes:
+        namespaces:
+          from: All
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: https-redirect
+  namespace: network
+spec:
+  parentRefs:
+    - name: internal
+      sectionName: http
+  hostnames:
+    - "*.${SECRET_DOMAIN}"
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301

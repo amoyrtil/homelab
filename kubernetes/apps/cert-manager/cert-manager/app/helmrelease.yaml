@@ -1,0 +1,31 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: cert-manager
+  namespace: cert-manager
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: cert-manager
+      version: v1.21.1
+      sourceRef:
+        kind: HelmRepository
+        name: jetstack
+        namespace: cert-manager
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    # CRD をチャートに入れさせる。別管理にすると Flux の prune と噛み合わない。
+    crds:
+      enabled: true
+    # DNS-01 の自己確認で権威 DNS を直接引かせる。
+    # 宅内は split-horizon で、内部 DNS に尋ねると自分が置いた TXT を
+    # 見つけられずチャレンジが完了しない。
+    dns01RecursiveNameservers: "1.1.1.1:53,9.9.9.9:53"
+    dns01RecursiveNameserversOnly: true

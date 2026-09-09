@@ -1,0 +1,30 @@
+# インターネットからの経路。cloudflared がここへ流す。
+# TLS は Cloudflare Edge で終端するため、listener は HTTP だけでよい。
+#
+# 公開のスイッチはこの Gateway への接続である。
+# external-dns（Cloudflare 系統）は homelab/scope=external の Gateway に
+# 繋がった HTTPRoute だけを見るため、parentRefs に external を書かない
+# サービスは公開 DNS に載らない。
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: external
+  namespace: network
+  labels:
+    homelab/scope: external
+  annotations:
+    # external-dns はこの Gateway に繋がった HTTPRoute の target を
+    # Gateway のアドレス（VLAN 120 の LB IP）ではなくトンネルに向ける。
+    # gateway source はこのアノテーションを override として読む。
+    external-dns.alpha.kubernetes.io/target: "${SECRET_CLOUDFLARE_TUNNEL_ID}.cfargotunnel.com"
+spec:
+  gatewayClassName: cilium
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      hostname: "*.${SECRET_DOMAIN}"
+      allowedRoutes:
+        namespaces:
+          from: All

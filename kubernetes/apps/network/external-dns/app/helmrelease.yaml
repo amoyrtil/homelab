@@ -1,0 +1,52 @@
+# Cloudflare 系統。公開 DNS だけを見る。
+# 内部 DNS 用の Pi-hole 系統はフェーズ1で別のリリースとして足す。
+# 2系統は txtOwnerId を分ける。同じ owner ID だと互いのレコードを
+# 管理外と見なして消し合う。
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: external-dns
+  namespace: network
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: external-dns
+      version: 1.21.1
+      sourceRef:
+        kind: HelmRepository
+        name: external-dns
+        namespace: network
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    provider:
+      name: cloudflare
+    env:
+      - name: CF_API_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: cloudflare-token
+            key: api-token
+    # Gateway API の HTTPRoute だけを見る。Service や Ingress は使わない。
+    sources:
+      - gateway-httproute
+    # 消えた HTTPRoute のレコードを消すため sync にする。
+    # 自分が作ったものかどうかは TXT レジストリで判定する。
+    policy: sync
+    registry: txt
+    txtOwnerId: homelab-cloudflare
+    # CNAME と TXT を同じ名前に置けないため prefix が要る。
+    txtPrefix: k8s.
+    domainFilters:
+      - "${SECRET_DOMAIN}"
+    extraArgs:
+      # 公開のスイッチ。external Gateway に繋がった HTTPRoute だけを見る。
+      - --gateway-label-filter=homelab/scope=external
+      # cfargotunnel.com への CNAME は proxied でなければ機能しない。
+      - --cloudflare-proxied
