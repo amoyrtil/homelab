@@ -10,7 +10,8 @@ homelab に Kubernetes クラスターと GitOps ベースの CI/CD を整備す
 
 ## 現在地
 
-**リハーサル（手順2）の R6 まで完了。次は R7。**
+**リハーサル（手順2）の R7 に着手した。**
+cert-manager までマニフェストを書き、Cloudflare の API トークンを待っている。
 最終更新は 2026年9月9日である。
 
 ### いまのクラスターの状態
@@ -60,33 +61,51 @@ DHCP Guarding も入れていない。VLAN 120 は対象外でよいが、機器
 
 **R7: cert-manager、Cloudflare Tunnel、external-dns（Cloudflare 系統のみ）。**
 
-着手には、こちらで用意できないものが3つ要る。
+対象ドメインは `kaeritei.com` である。
+ゾーンは Cloudflare に委任済みで、`cheryl.ns.cloudflare.com` と `mark.ns.cloudflare.com` が権威応答を返す。
+リポジトリが public のため、ドメイン名は SOPS で暗号化した `cluster-secrets` に置き、各 Kustomization の `postBuild` で `${SECRET_DOMAIN}` として展開する。
+
+手順を6段に分けた。
+
+| # | 内容 | 状態 |
+| --- | --- | --- |
+| 1 | `cluster-secrets` と、入口 Kustomization に復号を足す FluxInstance のパッチ | 書いた |
+| 2 | cert-manager と ClusterIssuer（staging と production） | 書いた。トークン待ち |
+| 3 | Gateway 本体と証明書 | |
+| 4 | cloudflared。ingress ルールの ConfigMap と NetworkPolicy を含む | Tunnel の認証情報待ち |
+| 5 | external-dns（Cloudflare 系統） | トークン待ち |
+| 6 | Flux の Webhook Receiver | |
+
+こちらで用意できないものが3つ残っている。
 
 | 要るもの | 用途 |
 | --- | --- |
-| ドメイン | Cloudflare で管理しているゾーン。`HTTPRoute` の hostname と証明書の対象になる |
-| Cloudflare の API トークン | cert-manager の DNS-01 チャレンジと external-dns。`Zone:DNS:Edit` と `Zone:Zone:Read` |
-| Cloudflare Tunnel | トンネルを1つ作り、その認証情報 |
+| Cloudflare の API トークン | cert-manager の DNS-01 チャレンジと external-dns。`Zone:DNS:Edit` と `Zone:Zone:Read` を対象ゾーンだけに絞る |
+| Cloudflare Tunnel | `cloudflared tunnel create` で1つ作り、その認証情報 |
+| ACME のメールアドレス | Let's Encrypt のアカウント登録。省略しても証明書は取れる |
 
 トークンは SOPS で暗号化して `kubernetes/` に置き、Flux に復号させる。R6 で経路は通してある。
+
+**証明書は staging で1回通してから production に切り替える。**
+Let's Encrypt の production はレート制限が厳しく、設定を誤ると週次の上限を使い切る。
+
+**Tunnel は CLI で作る。**
+Terraform への移行は R8 に置いた。CLI で作ったトンネルは後から import できるため、二重には作らない（[knowledge/terraform-provisioning.md](knowledge/terraform-provisioning.md)）。
 
 **external-dns の Pi-hole 系統は R7 の範囲外とする。**
 内部 DNS が待機系を持たないうちに宅内の名前解決をクラスターに寄せると、クラスターの停止が家中に波及する。
 着手の条件はフェーズ1の作業項目に書いた。
 
-あわせて Flux の Webhook Receiver をここで入れる。
-GitHub の push を直接受けるには受け口を外に出す必要があり、Cloudflare Tunnel が前提になる。
+Flux の Webhook Receiver を R7 に含めるのは、GitHub の push を直接受けるには受け口を外に出す必要があり、Cloudflare Tunnel が前提になるためである。
 それまではポーリングで反映される。
-
-手順は着手時に詰める。
 
 ### 作業の進め方
 
 - [x] **1. テンプレートの評価** — `onedr0p/cluster-template` を採用するか判断する。記録は [knowledge/cluster-template-evaluation.md](knowledge/cluster-template-evaluation.md)
-- [ ] **2. リハーサル** — いま動いているクラスターで、フェーズ1の構成を通す。R1 から R6 まで完了。詳細は「[リハーサル](#リハーサル)」節
+- [ ] **2. リハーサル** — いま動いているクラスターで、フェーズ1の構成を通す。R1 から R6 まで完了し、R7 に着手した。詳細は「[リハーサル](#リハーサル)」節
 - [ ] **3. 知見の集約** — 2 の結果を `knowledge/` に記録する。R1 から R6 の分は [knowledge/](knowledge/) に反映済み
 - [ ] **4. 規約の整備** — 命名規則など homelab 全体のルールを決め、プロジェクトルートの `CLAUDE.md` を更新する
-- [ ] **5. フェーズ1の構築** — EliteDesk 到着後、クラスターを本番として組み直す
+- [ ] **5. フェーズ1の構築** — EliteDesk 到着後、クラスターを本番として組み直す。UniFi と Cloudflare は R8 で書いた Terraform の構成をそのまま使う
 
 ### 作業環境
 
@@ -119,7 +138,8 @@ R1 から R4 までで踏んだ落とし穴は、**いずれも Cilium 側にあ
 - [x] **R4: Cilium BGP を UCG-Fiber と対向させる**（2026年9月9日 完了）
 - [x] **R5: Longhorn をワーカーにのみ展開する**（2026年9月9日 完了）
 - [x] **R6: Flux Operator と SOPS**（2026年9月9日 完了）
-- [ ] **R7: cert-manager、Cloudflare Tunnel、external-dns**（ドメインと Cloudflare の API トークンが要る）
+- [ ] **R7: cert-manager、Cloudflare Tunnel、external-dns**（Cloudflare の API トークンと Tunnel の認証情報が要る）
+- [ ] **R8: UniFi と Cloudflare を Terraform に移す**（未着手の VLAN から始め、既存リソースを import で回収する）
 
 R1 から R3 が山場である。
 ここが通れば残りは積み上げになる。
@@ -322,6 +342,7 @@ Backup DNS はクラスターと無関係に建てられるので、順番を入
 | MS-03 の接続 NIC | X710 の SFP+ か RTL8127 の RJ-45 か。USW-Pro-XG-10-PoE の SFP28 ポートは2口しかなく、うち1口は UCG-Fiber への上流で埋まる | 本設置の配線時 |
 | 10GbE 配線の到達範囲 | トポロジ図で USW-Pro-XG-10-PoE のポート 5-10（DS923+、MS-03 x2、サーバーノード x3）が `GbE` と表記されている。同機は全 RJ45 ポートが 10GbE で、MS-03 は 10G SFP+ を2口持つ。機器側 NIC の制約を指しているのか記入漏れなのかを確定させる | 本設置の配線時 |
 | フェーズ2で使う S100-WLP の個体 | morty / jerry / rick。3台のうち2台は内蔵 I226-V に物理層障害がある。容量とストレージ特性とあわせて選ぶ | フェーズ2 |
+| Terraform の実行場所と認証情報の渡し方 | 手元から回すか CI から回すか。UniFi provider は controller のローカル管理者アカウントを要求し、Cloudflare provider は Tunnel を作れるトークンを要求する。どちらも Git に平文で置けないため、`sops exec-env` で渡すか別の仕組みを使うかを決める | R8 の着手前 |
 
 ### いずれ回収する項目
 

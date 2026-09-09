@@ -17,6 +17,7 @@ homelab の構築過程で行った検証と、そこで得た知見の置き場
 | [bgp-peering.md](bgp-peering.md) | R4 の記録。Cilium の LoadBalancer IP を UCG-Fiber へ BGP で広告し、L2 Announcement を外すまで。UniFi の Zone-Based Firewall が BGP 経路の宛先をどう分類するかもここで確定した | 2026年9月9日 |
 | [longhorn-on-talos.md](longhorn-on-talos.md) | R5 の記録。Longhorn をワーカーにのみ展開し、レプリカ1で PVC を通すまで。Talos 側に要る kubelet の bind mount と、コントロールプレーンを外す方法 | 2026年9月9日 |
 | [flux-bootstrap.md](flux-bootstrap.md) | R6 の記録。Flux Operator を入れ、Longhorn を GitOps へ移し、SOPS で暗号化した Secret を Flux に復号させるまで。手で入れる鍵をどこで切るか | 2026年9月9日 |
+| [terraform-provisioning.md](terraform-provisioning.md) | R8 の着手前に調べた provider の実力。UniFi と Cloudflare の provider が Zone-Based Firewall と Tunnel をどこまで扱えるか、手で作った既存リソースを import で回収できるか。Terraform と Flux と external-dns の所有権の境界もここで決めた | 2026年9月9日 |
 
 ## 横断的な知見
 
@@ -45,3 +46,8 @@ homelab の構築過程で行った検証と、そこで得た知見の置き場
 - **Kubernetes の Secret は `encrypted_regex: ^(data|stringData)$` で暗号化する。** ファイル全体を暗号化すると `kind` まで隠れ、kustomize がリソースとして読めない。
 - **手でクラスターに入れる鍵は `sops-age` の1つだけ。** リポジトリが public のため Git 認証が要らない。private 化やオーガナイゼーション移行のときに2つ目が要る。
 - **クラスターを立てる順序は4箇所で入れ替えられない。** `cniConfig: none` は構築時にしか効かず、Gateway API の CRD は Cilium より先、Cilium は flux-operator より先、`sops-age` は `FluxInstance` より先である。
+- **UniFi の Terraform provider は `ubiquiti-community/unifi` に移っている。** `paultyng/unifi` は 2023年で更新が止まり、Zone-Based Firewall を扱えない。
+- **`unifi_firewall_policy` の順序は Terraform から管理できない。** `index` が read-only であり、ポリシーはゾーンペアの末尾に追加される。順序に依存しない設計にするか、UI で並べ替える。
+- **Cloudflare の Tunnel は CLI で作っても import できる。** `tunnel_secret` は provider の入力属性で、その値は `cloudflared tunnel create` が書く credentials ファイルに残っている。
+- **Terraform の state はクラスター内に置けない。** クラスターの前提となるネットワークを Terraform が作るため循環依存になる。Cloudflare R2 に置く。
+- **Cloudflare のサービス用 DNS レコードは external-dns の所有物である。** Terraform が同じ名前を握ると互いに消し合う。Terraform が持つのは apex や MX のように external-dns が触らないものだけ。
