@@ -10,7 +10,7 @@ homelab に Kubernetes クラスターと GitOps ベースの CI/CD を整備す
 
 ## 現在地
 
-**リハーサル（手順2）の R5 まで完了。次は R6。**
+**リハーサル（手順2）の R6 まで完了。次は R7。**
 最終更新は 2026年9月9日である。
 
 ### いまのクラスターの状態
@@ -28,6 +28,7 @@ homelab に Kubernetes クラスターと GitOps ベースの CI/CD を整備す
 `GatewayClass`、`CiliumLoadBalancerIPPool`（`192.168.120.100-250`）、BGP の3リソースが載っている。
 `CiliumL2AnnouncementPolicy` は R4 で削除した。
 Longhorn 1.12.1 が `longhorn-system` に入っており、worker-1 のみに展開されている。
+Flux が `flux-system` で動き、`kubernetes/` 以下を同期している。Longhorn はその管理下にある。
 検証に使ったリソースは削除済みで、`default` namespace は空である。
 
 cp-1 は USB Ethernet ドングル（`r8152`、MAC `6c:1f:f7:d3:99:42`）で接続している。
@@ -52,25 +53,22 @@ DHCP Guarding も入れていない。VLAN 120 は対象外でよいが、機器
 
 ### 次にやること
 
-**R6: Flux Operator と SOPS。**
+**R7: cert-manager、Cloudflare Tunnel、external-dns。**
 
-方針は決まっている。
-Flux Operator と `FluxInstance` で管理し、main へのマージをトリガーに反映する（[design.md のソフトウェア構成](design.md#ソフトウェア構成)）。
-シークレットは SOPS + age で、暗号化済みの Secret を Git にコミットする。
+ドメインと Cloudflare の API トークンが要る。
+トークンは SOPS で暗号化して `kubernetes/` に置き、Flux に復号させる。R6 で経路は通してある。
 
-`.sops.yaml` と `talos/talsecret.sops.yaml` は既にあり、age の鍵は `~/.config/sops/age/keys.txt` にある。
-
-着手前に1つ直すものがある。
-`.mise/config.toml` の `SOPS_AGE_KEY_FILE` がリポジトリ直下の `age.key` を指しているが、このファイルは存在しない。
-いまは sops が既定の場所にフォールバックして動いているだけである。
+あわせて Flux の Webhook Receiver をここで入れる。
+GitHub の push を直接受けるには受け口を外に出す必要があり、Cloudflare Tunnel が前提になる。
+それまではポーリングで反映される。
 
 手順は着手時に詰める。
 
 ### 作業の進め方
 
 - [x] **1. テンプレートの評価** — `onedr0p/cluster-template` を採用するか判断する。記録は [knowledge/cluster-template-evaluation.md](knowledge/cluster-template-evaluation.md)
-- [ ] **2. リハーサル** — いま動いているクラスターで、フェーズ1の構成を通す。R1 から R5 まで完了。詳細は「[リハーサル](#リハーサル)」節
-- [ ] **3. 知見の集約** — 2 の結果を `knowledge/` に記録する。R1 から R5 の分は [knowledge/talos-operations.md](knowledge/talos-operations.md)、[knowledge/bgp-peering.md](knowledge/bgp-peering.md)、[knowledge/longhorn-on-talos.md](knowledge/longhorn-on-talos.md) に反映済み
+- [ ] **2. リハーサル** — いま動いているクラスターで、フェーズ1の構成を通す。R1 から R6 まで完了。詳細は「[リハーサル](#リハーサル)」節
+- [ ] **3. 知見の集約** — 2 の結果を `knowledge/` に記録する。R1 から R6 の分は [knowledge/](knowledge/) に反映済み
 - [ ] **4. 規約の整備** — 命名規則など homelab 全体のルールを決め、プロジェクトルートの `CLAUDE.md` を更新する
 - [ ] **5. フェーズ1の構築** — EliteDesk 到着後、クラスターを本番として組み直す
 
@@ -104,7 +102,7 @@ R1 から R4 までで踏んだ落とし穴は、**いずれも Cilium 側にあ
 - [x] **R3: Cilium の Gateway API と LB IPAM**（2026年9月6日 完了）
 - [x] **R4: Cilium BGP を UCG-Fiber と対向させる**（2026年9月9日 完了）
 - [x] **R5: Longhorn をワーカーにのみ展開する**（2026年9月9日 完了）
-- [ ] **R6: Flux Operator と SOPS**
+- [x] **R6: Flux Operator と SOPS**（2026年9月9日 完了）
 - [ ] **R7: cert-manager、Cloudflare Tunnel、external-dns**（ドメインと Cloudflare の API トークンが要る）
 
 R1 から R3 が山場である。
@@ -112,7 +110,7 @@ R1 から R3 が山場である。
 
 ### 完了した検証
 
-R1 から R5 で確定した設定値は [design.md の「Talos と Cilium の必須設定」](design.md#talos-と-cilium-の必須設定)に移してある。
+R1 から R6 で確定した設定値は [design.md の「Talos と Cilium の必須設定」](design.md#talos-と-cilium-の必須設定)に移してある。
 ここには実測の結果だけを残す。
 
 **R1 の結果（2026年9月6日）**
@@ -223,6 +221,34 @@ design.md のゾーン間ポリシー表は、この前提のまま成立する�
 Longhorn が作るボリュームは root 所有で、`fsGroup` がないと `Permission denied` になる。
 
 詳細は [knowledge/longhorn-on-talos.md](knowledge/longhorn-on-talos.md) にある。
+
+**R6 の結果（2026年9月9日、flux-operator 0.59.0、Flux v2.9.5）**
+
+| 確認項目 | 結果 |
+| --- | --- |
+| コントローラー | source、kustomize、helm、notification の4つが Running |
+| `FluxInstance` | `READY: True` |
+| `GitRepository` | `True`。認証なしで public リポジトリを取得 |
+| Kustomization | `flux-system`、`apps`、`longhorn` がすべて `True` |
+| Longhorn の再導入 | Flux 経由で 19 Pod が worker-1 に。cp-1 は0件 |
+| PVC | `Bound`、書き込みと読み出しが成功 |
+| SOPS の復号 | Git 上の暗号化 Secret がクラスターで平文になる |
+| prune | Git から消すとクラスターからも消える |
+
+**手でクラスターに入れる鍵は `sops-age` の1つだけである。**
+リポジトリが public のため Git の認証情報が要らない。
+private 化やオーガナイゼーションへの移行のときに2つ目が要る。
+
+**flux-operator は `FluxInstance` の名前によらず `flux-system` という名前で GitRepository を作る。**
+`sourceRef` をそちらに向ける。
+
+**Kubernetes の Secret は `encrypted_regex` で `data` と `stringData` だけを暗号化する。**
+ファイル全体を暗号化すると `kind` まで隠れ、kustomize がリソースとして読めない。
+
+**Longhorn の `helm uninstall` は `deleting-confirmation-flag` を要求する。**
+ボリュームがある状態で行うとデータが消えるため、移行の前に0本であることを確かめる。
+
+詳細は [knowledge/flux-bootstrap.md](knowledge/flux-bootstrap.md) にある。
 
 ## 構築の作業
 
