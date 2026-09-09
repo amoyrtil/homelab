@@ -76,7 +76,8 @@ state は Cloudflare R2 に置く。
 `unifi_firewall_policy` の `index` が read-only であり、ポリシーの順序を Terraform から管理できない点に注意する。
 
 cloudflared の egress を絞る `CiliumNetworkPolicy` は R7 のあとに入れた。
-Pod と ClusterIP と Kubernetes API とノードへの到達は塞げたが、**Cilium Gateway 宛の通信は egress ポリシーの評価を通らない**ため、内部 Gateway への到達は塞げない。
+Gateway 宛の通信は L4 では止まらないが、Envoy が upstream を選んだ時点で backend に対して評価されるため、**公開する `HTTPRoute` の backend を列挙すれば塞げる**。
+その代わり、external Gateway に `HTTPRoute` を足すたびに backend を cloudflared の egress へ足す必要がある。
 記録は [knowledge/gateway-and-tunnel.md](knowledge/gateway-and-tunnel.md) にある。
 
 external-dns の Pi-hole 系統はリハーサルでは扱わない。
@@ -367,8 +368,6 @@ Backup DNS はクラスターと無関係に建てられるので、順番を入
 
 構築の本筋から外れるが、放置しないもの。
 
-- [ ] **Cloudflare の WAF が Webhook を落とす**：署名のない POST を短時間に繰り返したあと、`flux-webhook` への配送が Cloudflare の段階で `403 Access denied` になった。トンネルが healthy でも起きる。GitHub からの配送も同じく落ちるため GitOps の反映が黙って止まる。どのルールが落としているかは Cloudflare の Security Events で確認する。対処は webhook のパスに skip ルールを置くことで、R8 で `cloudflare_ruleset` の管理対象に含める
-- [ ] **内部専用サービスの認証**：cloudflared が乗っ取られた場合、内部 Gateway の背後にあるサービスへは届く。`CiliumNetworkPolicy` では塞げないため、内部向けにも認証を置くかを決める。LAN 内からは Cloudflare Access が効かないという既存の論点と同じもの（[knowledge/service-exposure.md](knowledge/service-exposure.md)）
 - [ ] **リポジトリを移すときの更新箇所**：名前の変更、オーガナイゼーションへの移動、private 化のいずれでも、`FluxInstance` の `sync.url`、GitHub の webhook、自動承認のワークフロー、docs 内の URL に更新が要る。移動そのものでは壊れず、次の同期や次の push で黙って効かなくなる。一覧は [knowledge/flux-bootstrap.md](knowledge/flux-bootstrap.md) にある
 - [ ] **スイッチポートの VLAN 割り当てを記録する**：どのポートを VLAN 20 にしたかの記録がなく、MS-03 の投入時に一度つまずいた
 - [ ] **10GbE で DS923+ との実効スループットを測る**：DS923+ を VLAN 20 に載せてから

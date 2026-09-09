@@ -1,16 +1,24 @@
 # cloudflared はインターネットからクラスターへ入る唯一の中継点である。
-# Pod のプロセスが乗っ取られた場合の横移動を止めるため、egress を絞る。
-# Cilium は egress ルールを1つでも書くと既定拒否になるので、許すものだけを並べる。
+# Pod のプロセスが乗っ取られた場合の横移動を止めるため、両方向を絞る。
+# Cilium は方向ごとに既定拒否になるので、許すものだけを並べる。
 #
-# 防げるのは cloudflared 自身が侵入されたときの横移動である。
+# 防げるのは cloudflared 自身が侵入されたときの被害である。
 # ConfigMap や Git を書ける相手には効かない。そちらは同じ場所にあるこの
 # ポリシーも書き換えられる。
 #
-# **外部 Gateway 宛のルールは書けない。**
-# Cilium Gateway 宛の通信は socket LB がローカルの Envoy へ折り返すため、
-# egress ポリシーの評価を通らない。ルールを書いても書かなくても届く。
-# したがって cloudflared が internal Gateway へ届くことは、このポリシーでは
-# 防げない。実測の詳細は docs/knowledge/gateway-and-tunnel.md にある。
+# **Gateway 宛の通信は L4 では止まらないが、backend 単位で止まる。**
+# Cilium は Gateway 宛のパケットを L7 LB へ先に回し、L3/L4 の egress 判定を
+# 飛ばす（bpf_lxc.c の "Forward to L7 LB first before applying network
+# policy"）。そのため Gateway そのものを toServices や toCIDRSet で
+# 指定しても一致しない。
+# 代わりに Envoy が upstream を選んだ時点で、送信元 Pod の egress ポリシーを
+# その backend に対して評価する。許可がなければ 403 と本文 `Access denied`
+# を返す。つまり **公開する HTTPRoute の backend をここに列挙する**のが
+# 正しい書き方であり、Gateway を区別する必要はない。
+#
+# 裏返すと、external Gateway に HTTPRoute を足すたびに、その backend を
+# ここへ足す必要がある。手間だが、トンネルから触れる先がこのファイルに
+# 列挙されるという利点がある。実測は docs/knowledge/gateway-and-tunnel.md にある。
 ---
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
@@ -21,8 +29,21 @@ spec:
   endpointSelector:
     matchLabels:
       app.kubernetes.io/name: cloudflared
+  ingress:
+    # :2000 は /ready と /metrics のほかに /config と /debug/pprof/ を
+    # 無認証で返す。/config にはトンネルの ingress ルール、つまり公開している
+    # ホスト名と backend の Service 名が入る。任意の Pod から読めてよいもの
+    # ではない。kubelet の probe だけを通す。
+    # Prometheus を入れるときはスクレイパをここに足す。足し忘れると
+    # スクレイプが黙って落ちる。
+    - fromEntities:
+        - host
+      toPorts:
+        - ports:
+            - port: "2000"
+              protocol: TCP
   egress:
-    # クラスター DNS。Edge のホスト名と Gateway の Service 名を解決する。
+    # クラスター DNS。Edge のホスト名と backend の Service 名を解決する。
     - toEndpoints:
         - matchLabels:
             io.kubernetes.pod.namespace: kube-system
@@ -36,10 +57,13 @@ spec:
     # Cloudflare Edge。QUIC で UDP、フォールバックの HTTP/2 で TCP を使う。
     # ポートは 443 ではなく 7844 である。
     #
-    # 443 は開けない。開けなくてもトンネルは4本張れる。
-    # 起動時の precheck が api.cloudflare.com:443 に届かず fail と出るが、
-    # hard_fail=false であり動作には影響しない。
-    # 世界中の HTTPS へ出られる経路を残さないほうを採る。
+    # 443 は開けない。Cloudflare のドキュメントは 443 を optional とし、
+    # 用途を自動更新の確認と PQ 鍵交換のエラー報告に限っている。こちらは
+    # no-autoupdate: true であり、どちらも要らない。
+    # 起動時の precheck が api.cloudflare.com:443 に届かず fail と出るが
+    # hard_fail=false で動作に影響しない。
+    # world への 443 は、侵入された側から見て最も使いやすい持ち出し経路に
+    # なるため開けない。
     - toEntities:
         - world
       toPorts:
@@ -47,4 +71,14 @@ spec:
             - port: "7844"
               protocol: UDP
             - port: "7844"
+              protocol: TCP
+    # 公開している HTTPRoute の backend。
+    # いまは Flux の Webhook Receiver だけである。
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: flux-system
+            app: notification-controller
+      toPorts:
+        - ports:
+            - port: "9292"
               protocol: TCP

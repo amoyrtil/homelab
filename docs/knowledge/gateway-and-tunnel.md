@@ -149,57 +149,104 @@ external-dns の同期（既定 1分間隔）より先に名前を引くと、�
 
 ## cloudflared の egress を絞る
 
+目的は cloudflared のプロセスが乗っ取られた場合の被害を限ることである。
+ConfigMap や Git を書ける相手には効かない。同じ場所にあるポリシーも書き換えられる。
+
 **Edge へのポートは 443 ではなく 7844 である。**
-`world` 宛の 443 だけを許して 7844 を落とすと、`failed to dial to edge with quic: timeout: no recent network activity` でコネクションが切れる。
+`world` 宛の 443 だけを許して 7844 を落とすと `failed to dial to edge with quic: timeout: no recent network activity` でコネクションが切れる。
 Hubble には `world:7844 (UDP) Policy denied DROPPED` が残る。
 
-**443 は開けなくてよい。**
-7844 だけでコネクションは4本張れる。
-起動時の precheck が `api.cloudflare.com:443` に届かず `status=fail` と出るが、`hard_fail=false` であり動作に影響しない。
-locally-managed のトンネルは設定を Cloudflare API から取らないためである。
-世界中の HTTPS へ出られる経路を残さないほうを採った。
+**443 は開けない。**
+Cloudflare のドキュメントは 7844 の TCP と UDP を必須とし、443 は optional として用途を自動更新の確認と PQ 鍵交換のエラー報告に限っている。
+`no-autoupdate: true` のこの構成では両方とも要らない。
+起動時の precheck が `api.cloudflare.com:443` に届かず `status=fail` と出るが `hard_fail=false` である。
+world への 443 は、侵入された側から見て最も使いやすい持ち出し経路になるため開けない。
 
-**Cilium Gateway 宛の通信は egress ポリシーの評価を通らない。**
-これが一番効いた発見である。
-`toServices` でも `toCIDRSet` でも、外部 Gateway だけを許して内部 Gateway を落とすことはできない。
-ルールを1つも書かなくても両方の Gateway に届く。
+### Gateway 宛は L4 では止まらないが backend 単位で止まる
 
-確かめ方は、cloudflared と同じラベルを付けた probe Pod を置き、ポリシーの効いた状態で宛先を変えて叩くことである。
+**ここは一度読み違えたので、順に書く。**
+
+Cilium は Gateway 宛のパケットを L7 LB へ先に回し、L3/L4 の egress 判定を飛ばす。
+`bpf/bpf_lxc.c` に `Forward to L7 LB first before applying network policy` というコメントとともに書かれている。
+したがって Gateway そのものを `toServices` や `toCIDRSet` で指定しても一致しない。
+socket LB の副作用ではないため、`socketLB` を切っても変わらない。
+
+ここまでは正しい。
+ここから「Gateway 宛は塞げない」と結論したのが誤りだった。
+
+**Envoy が upstream を選んだ時点で、送信元 Pod の egress ポリシーがその backend に対して評価される。**
+許可がなければ `403` と本文 `Access denied` を返す。
+つまり公開する `HTTPRoute` の backend を列挙するのが正しい書き方であり、Gateway を区別する必要はない。
+
+読み違えた原因は、probe Pod が受けた `404` の解釈である。
+`404` は `HTTPRoute` に一致しなかったときに Envoy 自身が返す応答であり、upstream が選ばれていない。
+評価が一度も走っていない状態を「到達できた」と読んでいた。
+
+ホスト名を実在のルートに合わせて測り直すと、区別が出る。
 
 ```
-外部 Gateway の ClusterIP : 404   （Gateway に到達）
-外部 Gateway の LB IP     : 404
-内部 Gateway の LB IP     : 404   ← 許していないのに届く
-external-dns の ClusterIP : 000   （拒否）
-Kubernetes API 10.96.0.1  : 000   （拒否）
+internal Gateway 経由、許可していない backend : 403 Access denied
+internal Gateway 経由、許可済みの backend     : 到達する
+external-dns の ClusterIP                    : 000（L4 で拒否）
+Kubernetes API 10.96.0.1                     : 000（L4 で拒否）
 ```
 
-Gateway 以外は正しく拒否される。
-つまりポリシーは効いており、Gateway 宛だけが評価の前に socket LB でローカルの Envoy へ折り返されている。
+Webhook Receiver でも同じ順序で確認できた。
 
-`toServices` を試した最初の案が通ったように見えたのは、ルールが効いたからではない。
-両方の Gateway の EndpointSlice がどちらも `192.192.192.192` という Cilium のダミーを1つ持つだけで、実体の Pod がないためである。
+| ポリシー | GitHub の配送 |
+| --- | --- |
+| 無し | `200` |
+| 有り、backend 許可なし | `403` |
+| 有り、backend 許可あり | `200` |
 
-**残る露出。**
-cloudflared が乗っ取られた場合、内部 Gateway の背後にある内部専用のサービスへは届く。
-ポリシーで塞げないため、内部向けにも認証を置くかどうかの判断に回る。
-これは [service-exposure.md](service-exposure.md) の「Cloudflare Access と WAF は LAN 内から効かない」で残した論点と同じものである。
+**運用上の結合が生まれる。**
+external Gateway に `HTTPRoute` を足すたびに、その backend を cloudflared の egress へ足す必要がある。
+手間だが、トンネルから触れる先が1つのファイルに列挙されるという利点がある。
 
-Pod、ClusterIP、Kubernetes API、ノードへの到達は塞げている。
-`automountServiceAccountToken: false` で Kubernetes の認証情報も持たないため、侵入後にできることは内部 Gateway 経由の HTTP に限られる。
+`toServices` が一致しない理由は、両方の Gateway の EndpointSlice がどちらも `192.192.192.192` という Cilium のダミーを1つ持つだけで、実体の Pod がないためである。
+`pkg/policy/k8s/service.go` が `toServices` を backend の prefix から `ToCIDRSet` へ展開するため、ダミーだけが展開される。
 
-## Cloudflare の WAF が Webhook を落とすことがある
+Gateway を identity で区別する道は今も無い。
+区別すべきは Gateway ではなく backend である。
 
-署名のない POST を短時間に何度も投げたあと、`flux-webhook` への配送が Cloudflare の段階で `403 Access denied` になった。
-`Server=cloudflare` が付き、notification-controller には何も届かない。
-トンネルが healthy な状態でも起きる。
+### 403 Access denied を Cloudflare の WAF と読み違えた
 
-GitHub からの配送も同じく `403` になるため、**GitOps の反映が黙って止まる**。
-どのルールが落としているかは Cloudflare の Security Events でしか分からない。
-DNS 権限だけのトークンでは読めない。
+**この `403` は Cilium の Envoy が返している。**
+`Access denied` は Cilium の既定の応答本文であり、`--http-403-msg` で変えられる。
 
-対処は WAF の skip ルールを webhook のパスに置くことである。
-R8 で Cloudflare を Terraform に移すとき、`cloudflare_ruleset` の管理対象に含める。
+紛らわしいのは、トンネル経由の応答には Cloudflare が必ず `Server: cloudflare` を付けることである。
+応答ヘッダだけでは WAF の 403 と区別できない。
+実際、WAF が落としていると判断して plan.md に未回収として立ててしまった。
+
+切り分けは Cloudflare を通さずに行う。
+cloudflared と同じラベルを付けた probe Pod から Gateway を直接叩き、`Server` ヘッダの有無を見る。
+ポリシーを外して配送が通るかを見るのも早い。
+
+### :2000 は /config を無認証で返す
+
+`metrics: 0.0.0.0:2000` で立つ cloudflared のメトリクスサーバは、`/ready` と `/metrics` のほかに `/config` と `/debug/pprof/` を返す。
+`/config` はトンネルの ingress ルール、つまり公開しているホスト名と backend の Service 名を含む。
+クラスター内の任意の Pod から読める状態だった。
+
+ingress を1つ書き、`fromEntities: [host]` で kubelet の probe だけを通す。
+Cilium は方向ごとに既定拒否になるため、egress だけを書いていると ingress は無制限のままである。
+probe は `host` だけで通り、Pod は Ready を保った。
+
+Prometheus を入れるときはスクレイパをここへ足す。
+足し忘れるとスクレイプが黙って落ちる。
+
+### 実例との比較
+
+home-operations 系のリポジトリに cloudflared の egress ポリシーの実例は無い。
+この界隈のデファクトは「当てていない」である。
+
+個人リポジトリやブログの実例では、ポートを指定している例のすべてが world への 443 を開けている。
+ただし理由を正しく書けているものは少なく、registration に要る、TLS のフォールバックに要る、といった Cloudflare のドキュメントに裏付けのない説明が混ざる。
+多いことと検証されていることは別である。
+
+`toFQDNs` で `*.argotunnel.com` に絞る例もある。
+採らなかったのは、クラスターの唯一の入口の可用性を Cilium の DNS proxy に依存させることになるためである。
+加えて cloudflared は既定リゾルバが失敗すると `1.1.1.1:853` へ直接 DoT で SRV を引き、この経路は DNS proxy を通らないため IP が学習されず、結果として 7844 が拒否される。
 
 ## 未回収
 
@@ -208,5 +255,3 @@ R8 で Cloudflare を Terraform に移すとき、`cloudflare_ruleset` の管理
 `RequestRedirect` フィルターにポートを書いていないが、Cilium は `https://foo.example.com:443/` を返す。
 動作に問題はないが、リダイレクト先の URL としては冗長である。
 
-**Cloudflare の WAF ルールを Terraform の管理下に置いていない。**
-webhook のパスに skip ルールが要る。R8 で回収する。
