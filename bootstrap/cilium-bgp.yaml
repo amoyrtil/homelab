@@ -1,0 +1,58 @@
+# Cilium BGP Control Plane。LoadBalancer IP を UCG-Fiber へ /32 で広告する。
+# ASN の割り当ては docs/design.md#bgp にある。
+---
+apiVersion: cilium.io/v2
+kind: CiliumBGPClusterConfig
+metadata:
+  name: default
+spec:
+  # 広告するのはワーカーのみ。allowSchedulingOnControlPlanes が false であり、
+  # コントロールプレーンにワークロードは載らない。
+  nodeSelector:
+    matchExpressions:
+      - key: node-role.kubernetes.io/control-plane
+        operator: DoesNotExist
+  bgpInstances:
+    - name: homelab
+      localASN: 65001
+      peers:
+        - name: ucg-fiber
+          peerASN: 65000
+          peerAddress: 192.168.20.1
+          peerConfigRef:
+            name: default
+---
+apiVersion: cilium.io/v2
+kind: CiliumBGPPeerConfig
+metadata:
+  name: default
+spec:
+  families:
+    # IPv4 のみ。UCG-Fiber 側も ipv4 unicast だけを activate している。
+    - afi: ipv4
+      safi: unicast
+      advertisements:
+        matchLabels:
+          advertise: bgp
+---
+apiVersion: cilium.io/v2
+kind: CiliumBGPAdvertisement
+metadata:
+  name: default
+  labels:
+    advertise: bgp
+spec:
+  advertisements:
+    - advertisementType: Service
+      service:
+        addresses:
+          - LoadBalancerIP
+      # すべての Service を対象にする。存在しないラベルに NotIn を掛けることで
+      # 全件にマッチさせる Cilium の定石である。selector を省くと0件になる。
+      # 個別に絞る必要が出たらここを変える。
+      selector:
+        matchExpressions:
+          - key: bgp.homelab/never-set
+            operator: NotIn
+            values:
+              - never-used-value
