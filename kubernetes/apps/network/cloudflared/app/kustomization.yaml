@@ -5,3 +5,4 @@ resources:
   - credentials.sops.yaml
   - configmap.yaml
   - deployment.yaml
+  - networkpolicy.yaml

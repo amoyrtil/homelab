@@ -108,10 +108,9 @@ cloudflared はこれを宛先にする。
 **未登録のホスト名は cloudflared に届かない。**
 Cloudflare Edge が `530` を返して落とすため、末尾の `404` は保険として残る。
 
-**precheck は `region2` で失敗する。**
-`region1.v2.argotunnel.com` への QUIC と HTTP/2 は成功し、`region2` は両方失敗する。
-コネクション4本は正常に登録され、通信にも影響はない。
-UCG-Fiber 側で `region2` の宛先が塞がれている可能性があるが、追っていない。
+**`region2` の precheck 失敗は一時的なものだった。**
+初回の起動では `region2.v2.argotunnel.com` への QUIC と HTTP/2 が両方失敗したが、後の起動では両方成功している。
+経路の問題ではない。
 
 ## Flux の Webhook Receiver
 
@@ -148,17 +147,111 @@ Cloudflare のゾーンは SOA の最小 TTL が 1800 秒である。
 external-dns の同期（既定 1分間隔）より先に名前を引くと、宅内のリゾルバが最大 30 分そのネガティブ応答を返し続ける。
 外部から確認するときは `dig @1.1.1.1` で権威側を引き、`curl` には `--resolve` を渡す。
 
+## cloudflared の egress を絞る
+
+目的は cloudflared のプロセスが乗っ取られた場合の被害を限ることである。
+ConfigMap や Git を書ける相手には効かない。同じ場所にあるポリシーも書き換えられる。
+
+**Edge へのポートは 443 ではなく 7844 である。**
+`world` 宛の 443 だけを許して 7844 を落とすと `failed to dial to edge with quic: timeout: no recent network activity` でコネクションが切れる。
+Hubble には `world:7844 (UDP) Policy denied DROPPED` が残る。
+
+**443 は開けない。**
+Cloudflare のドキュメントは 7844 の TCP と UDP を必須とし、443 は optional として用途を自動更新の確認と PQ 鍵交換のエラー報告に限っている。
+`no-autoupdate: true` のこの構成では両方とも要らない。
+起動時の precheck が `api.cloudflare.com:443` に届かず `status=fail` と出るが `hard_fail=false` である。
+world への 443 は、侵入された側から見て最も使いやすい持ち出し経路になるため開けない。
+
+### Gateway 宛は L4 では止まらないが backend 単位で止まる
+
+**ここは一度読み違えたので、順に書く。**
+
+Cilium は Gateway 宛のパケットを L7 LB へ先に回し、L3/L4 の egress 判定を飛ばす。
+`bpf/bpf_lxc.c` に `Forward to L7 LB first before applying network policy` というコメントとともに書かれている。
+したがって Gateway そのものを `toServices` や `toCIDRSet` で指定しても一致しない。
+socket LB の副作用ではないため、`socketLB` を切っても変わらない。
+
+ここまでは正しい。
+ここから「Gateway 宛は塞げない」と結論したのが誤りだった。
+
+**Envoy が upstream を選んだ時点で、送信元 Pod の egress ポリシーがその backend に対して評価される。**
+許可がなければ `403` と本文 `Access denied` を返す。
+つまり公開する `HTTPRoute` の backend を列挙するのが正しい書き方であり、Gateway を区別する必要はない。
+
+読み違えた原因は、probe Pod が受けた `404` の解釈である。
+`404` は `HTTPRoute` に一致しなかったときに Envoy 自身が返す応答であり、upstream が選ばれていない。
+評価が一度も走っていない状態を「到達できた」と読んでいた。
+
+ホスト名を実在のルートに合わせて測り直すと、区別が出る。
+
+```
+internal Gateway 経由、許可していない backend : 403 Access denied
+internal Gateway 経由、許可済みの backend     : 到達する
+external-dns の ClusterIP                    : 000（L4 で拒否）
+Kubernetes API 10.96.0.1                     : 000（L4 で拒否）
+```
+
+Webhook Receiver でも同じ順序で確認できた。
+
+| ポリシー | GitHub の配送 |
+| --- | --- |
+| 無し | `200` |
+| 有り、backend 許可なし | `403` |
+| 有り、backend 許可あり | `200` |
+
+**運用上の結合が生まれる。**
+external Gateway に `HTTPRoute` を足すたびに、その backend を cloudflared の egress へ足す必要がある。
+手間だが、トンネルから触れる先が1つのファイルに列挙されるという利点がある。
+
+`toServices` が一致しない理由は、両方の Gateway の EndpointSlice がどちらも `192.192.192.192` という Cilium のダミーを1つ持つだけで、実体の Pod がないためである。
+`pkg/policy/k8s/service.go` が `toServices` を backend の prefix から `ToCIDRSet` へ展開するため、ダミーだけが展開される。
+
+Gateway を identity で区別する道は今も無い。
+区別すべきは Gateway ではなく backend である。
+
+### 403 Access denied を Cloudflare の WAF と読み違えた
+
+**この `403` は Cilium の Envoy が返している。**
+`Access denied` は Cilium の既定の応答本文であり、`--http-403-msg` で変えられる。
+
+紛らわしいのは、トンネル経由の応答には Cloudflare が必ず `Server: cloudflare` を付けることである。
+応答ヘッダだけでは WAF の 403 と区別できない。
+実際、WAF が落としていると判断して plan.md に未回収として立ててしまった。
+
+切り分けは Cloudflare を通さずに行う。
+cloudflared と同じラベルを付けた probe Pod から Gateway を直接叩き、`Server` ヘッダの有無を見る。
+ポリシーを外して配送が通るかを見るのも早い。
+
+### :2000 は /config を無認証で返す
+
+`metrics: 0.0.0.0:2000` で立つ cloudflared のメトリクスサーバは、`/ready` と `/metrics` のほかに `/config` と `/debug/pprof/` を返す。
+`/config` はトンネルの ingress ルール、つまり公開しているホスト名と backend の Service 名を含む。
+クラスター内の任意の Pod から読める状態だった。
+
+ingress を1つ書き、`fromEntities: [host]` で kubelet の probe だけを通す。
+Cilium は方向ごとに既定拒否になるため、egress だけを書いていると ingress は無制限のままである。
+probe は `host` だけで通り、Pod は Ready を保った。
+
+Prometheus を入れるときはスクレイパをここへ足す。
+足し忘れるとスクレイプが黙って落ちる。
+
+### 実例との比較
+
+home-operations 系のリポジトリに cloudflared の egress ポリシーの実例は無い。
+この界隈のデファクトは「当てていない」である。
+
+個人リポジトリやブログの実例では、ポートを指定している例のすべてが world への 443 を開けている。
+ただし理由を正しく書けているものは少なく、registration に要る、TLS のフォールバックに要る、といった Cloudflare のドキュメントに裏付けのない説明が混ざる。
+多いことと検証されていることは別である。
+
+`toFQDNs` で `*.argotunnel.com` に絞る例もある。
+採らなかったのは、クラスターの唯一の入口の可用性を Cilium の DNS proxy に依存させることになるためである。
+加えて cloudflared は既定リゾルバが失敗すると `1.1.1.1:853` へ直接 DoT で SRV を引き、この経路は DNS proxy を通らないため IP が学習されず、結果として 7844 が拒否される。
+
 ## 未回収
+
 
 **HTTP から HTTPS へのリダイレクトに `:443` が付く。**
 `RequestRedirect` フィルターにポートを書いていないが、Cilium は `https://foo.example.com:443/` を返す。
 動作に問題はないが、リダイレクト先の URL としては冗長である。
 
-**cloudflared の egress を絞る NetworkPolicy を入れていない。**
-Cilium の Gateway API はデータプレーンが Pod endpoint ではなく、Envoy がノード上で受ける。
-`CiliumNetworkPolicy` の `toEndpoints` で外部 Gateway を選べないため、`toServices` か CIDR で書くことになる。
-書き方を単独で検証してから入れる。
-
-これがないと、cloudflared の Pod はクラスター内の任意のアドレスへプロキシできる状態にある。
-トンネルの資格情報が漏れた場合に攻撃者が得るのは「自分でトンネルを動かせること」であって、クラスターへの侵入経路ではない。
-危ないのは cloudflared 自身が中継器として使えることのほうである。

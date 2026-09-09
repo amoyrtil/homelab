@@ -75,9 +75,10 @@ state は Cloudflare R2 に置く。
 調査の記録は [knowledge/terraform-provisioning.md](knowledge/terraform-provisioning.md) にある。
 `unifi_firewall_policy` の `index` が read-only であり、ポリシーの順序を Terraform から管理できない点に注意する。
 
-**R7 から持ち越した作業が1つある。**
-cloudflared の egress を絞る `CiliumNetworkPolicy` である。
-Cilium の Gateway API はデータプレーンが Pod endpoint ではないため、外部 Gateway だけを許可する書き方を単独で検証する必要がある。
+cloudflared の egress を絞る `CiliumNetworkPolicy` は R7 のあとに入れた。
+Gateway 宛の通信は L4 では止まらないが、Envoy が upstream を選んだ時点で backend に対して評価されるため、**公開する `HTTPRoute` の backend を列挙すれば塞げる**。
+その代わり、external Gateway に `HTTPRoute` を足すたびに backend を cloudflared の egress へ足す必要がある。
+記録は [knowledge/gateway-and-tunnel.md](knowledge/gateway-and-tunnel.md) にある。
 
 external-dns の Pi-hole 系統はリハーサルでは扱わない。
 待機系となる Backup DNS がフェーズ1の成果物であり、それが建つ前に宅内の名前解決をクラスターへ寄せられないためである。
