@@ -272,10 +272,20 @@ NPU は現時点で使えない（[knowledge/design-rationale.md](knowledge/desi
 大容量メディアはこの制約に当たらないため、**DS923+ の SMB 運用は維持する**。
 
 **Longhorn はワーカーにのみ展開する。**
-DaemonSet が control-plane の taint を許容しないよう設定し、コントロールプレーンの schematic には `iscsi-tools` を含めない。
+チャートの `taintToleration` は既定が空で、コントロールプレーンの taint を許容しない。
+`allowSchedulingOnControlPlanes` が `false` である限り、`nodeSelector` を書かなくてもワーカーにしか載らない。
+コントロールプレーンの schematic には `iscsi-tools` を含めない。
 
 Longhorn の namespace には `pod-security.kubernetes.io/enforce=privileged` を設定する。
 Talos は既定で `baseline` を強制するため、これを入れないと動かない。
+
+**ワーカーの kubelet に `/var/lib/longhorn` を bind mount する。**
+Talos の kubelet はコンテナで動くため、これがないと CSI が作るマウントが kubelet へ伝播しない。
+`talconfig.yaml` の `worker.patches` に置き、`rshared` を付ける。
+パスは Helm の `defaultSettings.defaultDataPath` と揃える。
+経緯は [knowledge/longhorn-on-talos.md](knowledge/longhorn-on-talos.md) にある。
+
+レプリカ数はフェーズ1で 1、S100-WLP をワーカーに足すフェーズ2で 2 に上げる。
 
 ## ソフトウェア構成
 
