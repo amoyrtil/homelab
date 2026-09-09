@@ -10,8 +10,8 @@ homelab に Kubernetes クラスターと GitOps ベースの CI/CD を整備す
 
 ## 現在地
 
-**リハーサル（手順2）の R3 まで完了。次は R4。**
-最終更新は 2026年9月8日である。
+**リハーサル（手順2）の R4 まで完了。次は R5。**
+最終更新は 2026年9月9日である。
 
 ### いまのクラスターの状態
 
@@ -23,11 +23,11 @@ homelab に Kubernetes クラスターと GitOps ベースの CI/CD を整備す
 | worker-1 | MS-03 | 192.168.20.41 | ワーカー |
 | VIP | — | 192.168.20.100 | Kubernetes API エンドポイント |
 
-入っているものは Talos v1.14.0、Kubernetes v1.37.0、Cilium v1.20.1（kube-proxy 置換、L7 proxy、Gateway API、L2 Announcement）である。
+入っているものは Talos v1.14.0、Kubernetes v1.37.0、Cilium v1.20.1（kube-proxy 置換、L7 proxy、Gateway API、BGP Control Plane）である。
 `allowSchedulingOnControlPlanes` は `false` にしてある。
-`GatewayClass`、`CiliumLoadBalancerIPPool`（192.168.20.200-250）、`CiliumL2AnnouncementPolicy` は残してある。
-プールは R4 で VLAN 120（`192.168.120.100-250`）に移す。
-検証に使った nginx と Gateway は削除済みで、`default` namespace は空である。
+`GatewayClass`、`CiliumLoadBalancerIPPool`（`192.168.120.100-250`）、BGP の3リソースが載っている。
+`CiliumL2AnnouncementPolicy` は R4 で削除した。
+検証に使った nginx と Service は削除済みで、`default` namespace は空である。
 
 cp-1 は USB Ethernet ドングル（`r8152`、MAC `6c:1f:f7:d3:99:42`）で接続している。
 S100-WLP は3台のうち2台の内蔵 I226-V に物理層障害があり、そのための回避策である。
@@ -44,89 +44,30 @@ VLAN 設計は実装の途中である。
 | --- | --- |
 | VLAN 20 | 作成済み。DHCP プールを `.150-250` に拡張済み |
 | VLAN 120 | 作成済み。ゲートウェイ `192.168.120.1` に作業端末から到達を確認 |
+| BGP | UCG-Fiber に FRR 設定を投入済み（UniFi 上の名前は `Blackwall-BGP`）。worker-1 とのピアが確立している |
 
 VLAN 10、30、40、50、60 は未着手である。
 DHCP Guarding も入れていない。VLAN 120 は対象外でよいが、機器を収容する VLAN では有効にする価値がある（特に部屋の LAN ドロップがある VLAN 30 とゲスト用の VLAN 60）。
 
 ### 次にやること
 
-**R4: Cilium BGP を UCG-Fiber と対向させる。**
+**R5: Longhorn をワーカーにのみ展開する。**
 
-ASN は決まっており（[design.md の BGP](design.md#bgp)）、UniFi 側の VLAN 120 も作成済みである。
-残るのは Cilium と UCG-Fiber の設定である。
+決まっていることは [design.md の「ストレージ」](design.md#ストレージ) にある。
+コントロールプレーンには載せず、DaemonSet が control-plane の taint を許容しないよう設定する。
+namespace には `pod-security.kubernetes.io/enforce=privileged` を与える。
+Talos は既定で `baseline` を強制するため、これがないと動かない。
 
-**あわせて LB Pool を VLAN 120 に移す。**
-ノードと同じ VLAN に置いたままでは、BGP に移した時点で VLAN 20 の機器から到達できなくなる。
-根拠は [knowledge/service-exposure.md](knowledge/service-exposure.md) にある。
+ワーカーは MS-03 の1台だけなので、レプリカ数は 1 とする。
+MS-03 の schematic には `iscsi-tools` と `util-linux-tools` が既に入っている。
 
-いま `default` は空でサービスが載っていない。
-プールを切り替えてもダウンタイムが出ないため、切り替えるならこの状態のうちに済ませる。
-
-**手順**
-
-1. Cilium の BGP Control Plane を有効化する。`bootstrap/cilium-values.yaml` に `bgpControlPlane.enabled: true` を足して `helm upgrade` する。これで BGP の CRD が入る
-2. Cilium 側の BGP リソースを作る。`CiliumBGPClusterConfig`、`CiliumBGPPeerConfig`、`CiliumBGPAdvertisement` の3つ。広告はワーカーのみとする
-3. UCG-Fiber に FRR 設定を入れる（下記）
-4. ピア確立を確認する。クラスター側は `cilium bgp peers`、ルーター側は `show ip bgp summary`
-5. `bootstrap/cilium-networks.yaml` のプールを `192.168.120.100-250` に変える
-6. テスト用の Service を作り、新プールから払い出した IP への到達を確認する
-7. `CiliumL2AnnouncementPolicy` を削除し、Helm values の `l2announcements` も外す
-8. 下記の2件を実測する
-
-**UCG-Fiber の FRR 設定**
-
-Settings → Routing → BGP からアップロードする（UniFi のバージョンによっては Policy Engine → Dynamic Routing → BGP）。
-
-```
-router bgp 65000
- bgp router-id 192.168.20.1
- no bgp ebgp-requires-policy
- no bgp default ipv4-unicast
- !
- neighbor k8s peer-group
- neighbor k8s remote-as 65001
- bgp listen range 192.168.20.0/24 peer-group k8s
- bgp listen limit 16
- !
- address-family ipv4 unicast
-  neighbor k8s activate
-  neighbor k8s soft-reconfiguration inbound
- exit-address-family
-!
-```
-
-`no bgp ebgp-requires-policy` を落とすと、**ピアは張れるのに経路が一切交換されない**。
-FRR は RFC 8212 に従って eBGP に route-map を要求するためである。
-症状から原因にたどり着きにくいので、最初から入れておく。
-
-`bgp listen range` は、ノードの IP を列挙せずに VLAN 20 からの接続を待ち受ける指定である。
-接続を開始するのは Cilium 側なので、ルーターは待つだけでよい。
-ノードが増えても両側とも設定を変えずに済む。
-
-**UniFi がこの構文を受け付けるかは未確認である。**
-参考にした記事3件はいずれもノード IP を明示列挙しており、UniFi で `listen range` を使った実例を見つけられなかった。
-弾かれた場合は明示列挙にフォールバックする。
-
-```
- neighbor 192.168.20.31 peer-group k8s
- neighbor 192.168.20.41 peer-group k8s
-```
-
-フォールバックした場合、ノードを増やすたびに UCG-Fiber 側も更新することになる。
-そのときはフェーズ2とフェーズ3の作業項目に書き足す。
-
-**R4 で測る2件**
-
-どちらも [knowledge/service-exposure.md](knowledge/service-exposure.md) の調査で確認できずに残ったものである。
-
-- **VLAN 20 の機器から VLAN 120 の LB IP に届くか。** 今回の設計変更が狙いどおり効いているかの本丸である。DS923+（`192.168.20.20`）は SSH が閉じているため、測るには VLAN 20 に検証用のホストを用意する必要がある
-- **UniFi の Zone-Based Firewall が、BGP で学習した `/32` をどのゾーンに分類するか。** VLAN 120 を定義すればそのゾーンのポリシーが効く見込みだが、実機で確かめていない
+手順は着手時に詰める。
 
 ### 作業の進め方
 
 - [x] **1. テンプレートの評価** — `onedr0p/cluster-template` を採用するか判断する。記録は [knowledge/cluster-template-evaluation.md](knowledge/cluster-template-evaluation.md)
-- [ ] **2. リハーサル** — いま動いているクラスターで、フェーズ1の構成を通す。R1 から R3 まで完了。詳細は「[リハーサル](#リハーサル)」節
-- [ ] **3. 知見の集約** — 2 の結果を `knowledge/` に記録する。R1 から R3 の分は [knowledge/talos-operations.md](knowledge/talos-operations.md) に反映済み
+- [ ] **2. リハーサル** — いま動いているクラスターで、フェーズ1の構成を通す。R1 から R4 まで完了。詳細は「[リハーサル](#リハーサル)」節
+- [ ] **3. 知見の集約** — 2 の結果を `knowledge/` に記録する。R1 から R4 の分は [knowledge/talos-operations.md](knowledge/talos-operations.md) と [knowledge/bgp-peering.md](knowledge/bgp-peering.md) に反映済み
 - [ ] **4. 規約の整備** — 命名規則など homelab 全体のルールを決め、プロジェクトルートの `CLAUDE.md` を更新する
 - [ ] **5. フェーズ1の構築** — EliteDesk 到着後、クラスターを本番として組み直す
 
@@ -143,9 +84,9 @@ FRR は RFC 8212 に従って eBGP に route-map を要求するためである�
 EliteDesk 800 G6 の到着を待つあいだ、S100-WLP + MS-03 のクラスターでフェーズ1の構成を通す。
 目的は手順とハマりどころを洗い出すことであり、成果物は `knowledge/` に残す。
 
-R1 から R3 までで、**この構成の落とし穴は2つとも Cilium 側にあった**ことが分かっている。
-`bpf.autoMount.enabled` を無効にすると `cilium-envoy` から BPF マップが見えなくなる件と、Gateway API の CRD が experimental チャネルを要求する件である。
-どちらも [knowledge/talos-operations.md](knowledge/talos-operations.md) に記録した。
+R1 から R4 までで踏んだ落とし穴は、**いずれも Cilium 側にあった**。
+`bpf.autoMount.enabled` を無効にすると `cilium-envoy` から BPF マップが見えなくなる件、Gateway API の CRD が experimental チャネルを要求する件、values を変えても Pod が入れ替わらない件の3つである。
+どれも [knowledge/talos-operations.md](knowledge/talos-operations.md) に記録した。
 
 クラスター名とノード名は現状のまま（`homelab`、`cp-1`、`worker-1`）で進める。
 命名規約は手順4で整理するため、ここでは触らない。
@@ -158,7 +99,7 @@ R1 から R3 までで、**この構成の落とし穴は2つとも Cilium 側�
 - [x] **R1: `cni: none` と kube-proxy 無効でクラスターを作る**（2026年9月6日 完了）
 - [x] **R2: Cilium を kube-proxy 置換・L7 proxy 有効で入れる**（2026年9月6日 完了）
 - [x] **R3: Cilium の Gateway API と LB IPAM**（2026年9月6日 完了）
-- [ ] **R4: Cilium BGP を UCG-Fiber と対向させる**（UCG-Fiber 側の FRR 設定と、VLAN 120 の定義が要る）
+- [x] **R4: Cilium BGP を UCG-Fiber と対向させる**（2026年9月9日 完了）
 - [ ] **R5: Longhorn をワーカーにのみ展開する**（レプリカ1）
 - [ ] **R6: Flux Operator と SOPS**
 - [ ] **R7: cert-manager、Cloudflare Tunnel、external-dns**（ドメインと Cloudflare の API トークンが要る）
@@ -168,7 +109,7 @@ R1 から R3 が山場である。
 
 ### 完了した検証
 
-R1 から R3 で確定した設定値は [design.md の「Talos と Cilium の必須設定」](design.md#talos-と-cilium-の必須設定)に移してある。
+R1 から R4 で確定した設定値は [design.md の「Talos と Cilium の必須設定」](design.md#talos-と-cilium-の必須設定)に移してある。
 ここには実測の結果だけを残す。
 
 **R1 の結果（2026年9月6日）**
@@ -200,8 +141,12 @@ R1 から R3 で確定した設定値は [design.md の「Talos と Cilium の�
 
 Service の負荷分散を Cilium の eBPF が肩代わりしていることを、kube-proxy 不在の状態で実証した。
 
-導入はまず `helm install` で最小構成を通し、動作を確認してから helmfile に落とした。
-失敗したときに Cilium の問題か helmfile の問題かを切り分けるためである。
+導入はまず `helm install` で最小構成を通し、動作を確認してから値を足した。
+失敗したときに Cilium 側の問題か値の問題かを切り分けるためである。
+
+**helmfile への移行は未着手である。**
+いまは `bootstrap/cilium-values.yaml` を `helm upgrade` に直接渡している。
+bootstrap を helmfile で行う方針は [knowledge/cluster-template-evaluation.md](knowledge/cluster-template-evaluation.md) で採ってあり、手順5（フェーズ1の構築）で実装する。
 
 **R3 の結果（2026年9月6日）**
 
@@ -218,14 +163,38 @@ CRD をどのチャネルで入れるかと、`bpf.autoMount.enabled` を無効�
 後者は CNI としての疎通が正常なまま Gateway だけが 500 を返すため、Gateway API を入れるまで気付けない。
 詳細は [knowledge/talos-operations.md](knowledge/talos-operations.md) に記した。
 
-L2 Announcement は R4 で BGP に移すまでの確認用であり、ワーカーのみが広告するよう `nodeSelector` を付けている。
-
 **R4 着手前の調査（2026年9月8日）**
 
 BGP に移す前に、LB IP の到達性と名前解決の2点を調べた。
 LB Pool をノードと同じ VLAN に置いたままでは BGP に移せないことが実測で分かり、VLAN 120 を切ることになった。
 同じ URL で家庭 LAN 内とインターネットの両方から届く構成は、既存の external-dns 2系統のまま成立する。
 記録は [knowledge/service-exposure.md](knowledge/service-exposure.md) にある。
+
+**R4 の結果（2026年9月9日）**
+
+| 確認項目 | 結果 |
+| --- | --- |
+| BGP CRD の API バージョン | `cilium.io/v2`（5種） |
+| `CiliumBGPNodeConfig` | `worker-1` のみ生成。コントロールプレーンには作られない |
+| ピア確立 | `established`。`bgp listen range` で成立 |
+| 広告される経路 | `192.168.120.100/32`、next-hop `192.168.20.41` |
+| VLAN 1 から LB IP へ | 連続5回すべて `HTTP 200` |
+| VLAN 20 から LB IP へ | 到達（検証端末 `192.168.20.32` から） |
+| ZBF の分類 | 宛先ネットワーク。Service ゾーンのポリシーが効く |
+| L2 Announcement 削除後 | BGP のみで到達を維持 |
+
+**`bgp listen range` は UniFi に通った。**
+明示列挙へのフォールバックは要らず、ノードを増やしても UCG-Fiber 側は変えずに済む。
+
+**Zone-Based Firewall は宛先ネットワークでゾーンを決める。**
+BGP で学習した `/32` は、next-hop が VLAN 20 にあってもアドレスの属する VLAN 120 のゾーンに入る。
+design.md のゾーン間ポリシー表は、この前提のまま成立する。
+
+**ここでも落とし穴は Cilium 側だった。**
+`helm upgrade` で values を変えても Pod は入れ替わらず、ConfigMap だけが書き換わって設定が黙って効かない。
+`rollOutCiliumPods` と `operator.rollOutPods` と `envoy.rollOutPods` を有効にして解消した。
+
+詳細は [knowledge/bgp-peering.md](knowledge/bgp-peering.md) にある。
 
 ## 構築の作業
 
@@ -234,12 +203,13 @@ LB Pool をノードと同じ VLAN に置いたままでは BGP に移せない�
 
 **フェーズ1**
 
+UCG-Fiber 側の VLAN 120 と BGP はリハーサルで投入済みであり、クラスターを組み直しても残る（「[いまのネットワークの状態](#いまのネットワークの状態)」）。
+本番は最初から BGP 構成で組める。
+
 - [ ] EliteDesk 800 G6 を1台、`cp-1` として構築する
 - [ ] MS-03 を `worker-1` として再投入する
 - [ ] 「フェーズ1で入れるコンポーネント」を一式入れる
 - [ ] Pi-hole を移設し、クラスター外の副 DNS を用意する
-- [ ] UCG-Fiber に VLAN 120 を定義する（ゲートウェイ IP のみ、DHCP なし）
-- [ ] UCG-Fiber に FRR の BGP 設定を入れる
 
 **フェーズ2**
 

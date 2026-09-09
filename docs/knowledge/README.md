@@ -14,6 +14,7 @@ homelab の構築過程で行った検証と、そこで得た知見の置き場
 | [talos-v1.14-ufs.md](talos-v1.14-ufs.md) | Talos v1.14 で上流カーネルが UFS に対応したことを受け、`talos-ufs` のカスタムビルドが不要になったかを検証。あわせてクラスターを v1.14 へ移行し、MS-03 をワーカーとして投入した記録 | 2026年9月6日 |
 | [cluster-template-evaluation.md](cluster-template-evaluation.md) | `onedr0p/cluster-template` をリポジトリ構成の出発点にするかの評価。派生して Ingress、CI/CD、内部 DNS の方式も決めた | 2026年9月6日 |
 | [service-exposure.md](service-exposure.md) | R4 の着手前に調べた2件。LoadBalancer IP をノードと同じ VLAN に置いたまま BGP へ移せるかと、家庭 LAN 内とインターネットから同じ URL で届くか。前者は LB Pool 専用 VLAN を切る判断につながった | 2026年9月8日 |
+| [bgp-peering.md](bgp-peering.md) | R4 の記録。Cilium の LoadBalancer IP を UCG-Fiber へ BGP で広告し、L2 Announcement を外すまで。UniFi の Zone-Based Firewall が BGP 経路の宛先をどう分類するかもここで確定した | 2026年9月9日 |
 
 ## 横断的な知見
 
@@ -32,3 +33,6 @@ homelab の構築過程で行った検証と、そこで得た知見の置き場
 - **`onedr0p/cluster-template` はジェネレーターとしては採用しない。** ディレクトリ規約、Flux Operator 方式、helmfile ブートストラップ、mise のバージョン固定だけを借りる。
 - **LoadBalancer IP Pool をノードと同じ VLAN に置いたまま BGP へは移せない。** BGP は経路を広告するだけで ARP に応答しないため、同一 VLAN の機器は ARP 解決に失敗して届かなくなる。LB Pool 専用に VLAN 120（物理 VLAN の番号 + 100）を切る。
 - **同じ URL で LAN 内とインターネットの両方から届く。** external-dns 2系統による split-horizon DNS で成立する。ただし LAN 内のクライアントが DoH などで内部 DNS を迂回しないことが前提になる。
+- **UniFi の Zone-Based Firewall は宛先ネットワークでゾーンを決める。** BGP で学習した `/32` は、next-hop が別 VLAN にあっても、アドレスの属する VLAN のゾーンに入る。LB IP のアクセス制御を VLAN 120 のゾーンポリシーで書ける。
+- **`bgp listen range` は UniFi に通る。** UCG-Fiber 側にノード IP を列挙する必要はなく、ノードを増やしてもルーターの設定は変えずに済む。
+- **Cilium は values を変えても Pod を入れ替えない。** `rollOutCiliumPods` と `operator.rollOutPods` と `envoy.rollOutPods` を有効にしないと、`helm upgrade` が成功したまま設定が効かない。

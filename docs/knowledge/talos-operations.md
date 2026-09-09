@@ -128,6 +128,47 @@ metadata.annotations: Too long: may not be more than 262144 bytes
 
 `kubectl apply --server-side` を使う。
 
+## Cilium の values を変えても Pod は入れ替わらない
+
+`helm upgrade` で values を変えると `cilium-config` ConfigMap は書き換わる。
+しかし DaemonSet と Deployment の Pod テンプレートは変わらないため、Kubernetes の側に Pod を入れ替える理由がない。
+Cilium は設定を起動時に読むので、変更は次に Pod が作り直されるまで効かない。
+
+`bgpControlPlane.enabled: true` を入れたときはこう見えた。
+
+```
+$ kubectl -n kube-system get cm cilium-config -o yaml | grep enable-bgp-control-plane
+  enable-bgp-control-plane: "true"
+
+$ kubectl api-resources --api-group=cilium.io | grep -i bgp
+（何も出ない）
+```
+
+ConfigMap には入っているのに、BGP の CRD が1つも登録されない。
+CRD を作るのは operator であり、その operator が古い設定のまま動き続けているためである。
+`helm upgrade` は `STATUS: deployed` を返す。
+`--wait` を付けても、入れ替わる Pod がなければ待つ対象もないため素通りする。
+
+chart には ConfigMap のハッシュを Pod の annotation に埋める仕組みがあるが、既定では無効である。
+
+| 値 | 対象 | 既定 |
+| --- | --- | --- |
+| `rollOutCiliumPods` | エージェント | `false` |
+| `operator.rollOutPods` | operator | `false` |
+| `envoy.rollOutPods` | 外部 Envoy | `false` |
+
+3つとも `true` にすると `helm upgrade` がそのままロールアウトになる。
+入れたあとで values を変えたところ、`rollout restart` を打たずにエージェント、operator、Envoy の Pod がすべて入れ替わった。
+
+有効にしない場合は、values を変えるたびに明示的に入れ替える。
+
+```bash
+kubectl -n kube-system rollout restart deployment/cilium-operator ds/cilium ds/cilium-envoy
+```
+
+どちらにせよエージェントが順に入れ替わり、データプレーンは一時的に途切れる。
+設定が黙って効かないまま残るよりは扱いやすい。
+
 ## インストーラーイメージは Image Factory から取る
 
 v1.14 で `ghcr.io/siderolabs/installer` の公開が止まった。

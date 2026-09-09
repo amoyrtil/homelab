@@ -140,6 +140,9 @@ DHCP は動かさない。
 「内部 VLAN 全般」には VLAN 120 を含む。
 Untrusted と Guest からクラスター上のサービスには到達させない。
 
+この表は、BGP で学習した `/32` が VLAN 120 のゾーンに分類されることを前提にしている。
+next-hop がワーカーのいる VLAN 20 にあっても宛先ネットワークで判定されることは、実機で確認済みである（[knowledge/bgp-peering.md](knowledge/bgp-peering.md)）。
+
 NVR をクラスター上に置く場合は Camera から VLAN 120 への許可が要る。
 録画先が決まっていないため、現時点では拒否のままにする（[plan.md](plan.md#いずれ回収する項目) の「UniFi Protect の録画先」）。
 
@@ -165,6 +168,10 @@ Cilium は `nodeSelector` で対象ノードを選ぶ。
 
 広告するのはワーカーのみとする。
 `allowSchedulingOnControlPlanes` が `false` であり、コントロールプレーンにワークロードを載せないためである。
+
+`bgp listen range` を UniFi が受け付けることは実機で確認済みである（[knowledge/bgp-peering.md](knowledge/bgp-peering.md)）。
+ルーター側の設定は `bootstrap/ucg-fiber-bgp.conf` に置き、UniFi 上では `Blackwall-BGP` という名前で登録する。
+Cilium 側の3つのリソースは `bootstrap/cilium-bgp.yaml` にある。
 
 ### 必要な設定
 
@@ -309,7 +316,7 @@ Talos は既定で `baseline` を強制するため、これを入れないと�
 
 ### Talos と Cilium の必須設定
 
-リハーサル R1 から R3 で実証した設定である（結果は [plan.md](plan.md#完了した検証) にある）。
+リハーサル R1 から R4 で実証した設定である（結果は [plan.md](plan.md#完了した検証) にある）。
 
 **クラスター構築時に効く設定**
 
@@ -340,11 +347,17 @@ v1alpha1 の `cluster.proxy.disabled` ではなく `KubeProxyConfig` ドキュ�
 | `k8sServiceHost` | `127.0.0.1` | KubePrism 経由で API に到達する。コントロールプレーンが増えても追従する |
 | `k8sServicePort` | `7445` | 同上 |
 | `cgroup.autoMount.enabled` | `false` | Talos が既に cgroupv2 を提供している |
-| `bpf.autoMount.enabled` | `false` | Talos が既に bpffs を提供している |
 | `securityContext.capabilities` | `SYS_MODULE` を除く | Talos はワークロードにカーネルモジュールのロードを許さない |
+| `bgpControlPlane.enabled` | `true` | LoadBalancer IP を BGP で広告する |
 
-`bpf.autoMount.enabled` を `false` にすると `cilium-envoy` から BPF マップが見えなくなる罠がある。
-対処は [knowledge/talos-operations.md](knowledge/talos-operations.md) にある。
+**`bpf.autoMount.enabled` は指定しない。**
+公式ガイドは Talos が bpffs を提供済みであることを理由に `false` を挙げているが、このフラグは hostPath ボリュームの定義ごと落とすため、`cilium-envoy` から BPF マップが見えなくなる。
+経緯は [knowledge/talos-operations.md](knowledge/talos-operations.md) にある。
+
+**設定変更を Pod に反映させる**
+
+`rollOutCiliumPods`、`operator.rollOutPods`、`envoy.rollOutPods` を `true` にする。
+既定では values を変えても ConfigMap が書き換わるだけで Pod は入れ替わらず、変更が黙って効かないまま残る。
 
 **Gateway API の CRD**
 
