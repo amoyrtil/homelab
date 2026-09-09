@@ -87,7 +87,7 @@ external-dns の Pi-hole 系統はリハーサルでは扱わない。
 ### 作業の進め方
 
 - [x] **1. テンプレートの評価** — `onedr0p/cluster-template` を採用するか判断する。記録は [knowledge/cluster-template-evaluation.md](knowledge/cluster-template-evaluation.md)
-- [ ] **2. リハーサル** — いま動いているクラスターで、フェーズ1の構成を通す。R1 から R7 まで完了。詳細は「[リハーサル](#リハーサル)」節
+- [ ] **2. リハーサル** — いま動いているクラスターで、フェーズ1の構成を通す。R1 から R7 まで完了。R8 と R9 が残る。詳細は「[リハーサル](#リハーサル)」節
 - [ ] **3. 知見の集約** — 2 の結果を `knowledge/` に記録する。R1 から R7 の分は [knowledge/](knowledge/) に反映済み
 - [ ] **4. 規約の整備** — 命名規則など homelab 全体のルールを決め、プロジェクトルートの `CLAUDE.md` を更新する
 - [ ] **5. フェーズ1の構築** — EliteDesk 到着後、クラスターを本番として組み直す。UniFi と Cloudflare は R8 で書いた Terraform の構成をそのまま使う
@@ -125,9 +125,48 @@ R1 から R4 までで踏んだ落とし穴は、**いずれも Cilium 側にあ
 - [x] **R6: Flux Operator と SOPS**（2026年9月9日 完了）
 - [x] **R7: cert-manager、Cloudflare Tunnel、external-dns**（2026年9月9日 完了）
 - [ ] **R8: UniFi と Cloudflare を Terraform に移す**（未着手の VLAN から始め、既存リソースを import で回収する）
+- [ ] **R9: アーキテクチャと実装の監査**（複数の視点でレビューする。詳細は「[R9 の進め方](#r9-の進め方)」節）
 
 R1 から R3 が山場である。
 ここが通れば残りは積み上げになる。
+
+### R9 の進め方
+
+R9 は検証ではなく監査である。
+ここまでの判断が「もっとも合理的な状態」だと言えるかを、複数の視点で確かめる。
+
+**R8 のあと、手順5に入る前に置く。**
+本番として組み直す前なら、設計の誤りを作り直しのついでに直せる。
+組んだあとに見つかると、動いているものを触ることになる。
+
+対象を分けて、それぞれに問いを1つずつ渡す。
+
+| # | 対象 |
+| --- | --- |
+| 1 | ネットワーク設計。VLAN の割り当て、Zone-Based Firewall のポリシー、BGP、LB IPAM |
+| 2 | ノードの構成。`talconfig.yaml`、schematic、クラスターを立てる順序 |
+| 3 | GitOps の構成。Flux、SOPS、ディレクトリ規約、リポジトリ構成 |
+| 4 | 公開とセキュリティ。Gateway、Tunnel、証明書、NetworkPolicy、external-dns の所有権 |
+| 5 | ストレージ。Longhorn、レプリカ数、バックアップ |
+| 6 | Terraform の構成。R8 の成果物 |
+| 7 | `knowledge/` の記録そのもの。誤りが残っていないか |
+
+**やり方は R7 で効いた形を踏襲する。**
+実装を読んで実務とアラインしているかを判定する系統と、インターネットの実例と比較して乖離を判定する系統を、同じ対象へ並行してぶつける。
+R7 ではこの組み合わせで、前者が機構の読み違いを拾い、後者がポートの判断の妥当性を裏付けた。
+
+守るルールが3つある。
+
+**1つのエージェントに問いは1つだけ渡す。**
+観点を増やすと、どの指摘がどの観点から出たのか分からなくなる。
+
+**結論が食い違ったら実測で決める。**
+R7 では2つのエージェントが Gateway 宛の egress の扱いで逆の結論を出し、クラスターで測って決着した。
+どちらが多数派かではなく、測れるかどうかで決める。
+
+**エージェントの報告をそのまま採らない。**
+R7 のレビューは結論として正しかったが、根拠は「コードと issue から筋は通る」までで実挙動は未確認だと自ら書いていた。
+測って初めて、こちらの結論と、もう一方のエージェントの結論の誤りが確定した。
 
 ### 完了した検証
 
@@ -374,7 +413,7 @@ Backup DNS はクラスターと無関係に建てられるので、順番を入
 - [ ] **Pi-hole の冗長化**：クラスター内の Pi-hole を primary、Raspberry Pi 3 を replica として `nebula-sync` で設定を同期する。Pi-hole v6 では Gravity Sync も Orbital Sync も動かず、`nebula-sync` が現行の解になる。両方が v6 である必要がある。external-dns が書く Custom DNS のレコードは同期対象に含める。含めないと replica がクラスター上のサービス名を解決できず、待機系として機能しない（[knowledge/service-exposure.md](knowledge/service-exposure.md)）。あわせて DHCP で primary と secondary の両方を配る
 - [ ] **UniFi Protect の録画先**：UCG-Fiber はストレージを持たないため、カメラ2台の録画先が存在しない。UNVR の追加、DS923+ の Surveillance Station、Kubernetes 上の NVR（Frigate 等）が候補になる。選択によって Camera VLAN のポリシーが変わる
 - [ ] **external-dns の Pi-hole プロバイダーが Pi-hole v6 で動くか**：未確認である。v6 は API が変わっており、`nebula-sync` を採ったのも v6 で Gravity Sync と Orbital Sync が動かなかったためで、同じ理由で引っかかる可能性がある。動かない場合は、内部 DNS を UniFi の Local DNS Records に寄せて external-dns の UniFi webhook から書く案（[knowledge/service-exposure.md](knowledge/service-exposure.md) で一度は退けたもの）の再検討になり、design.md の「内部の名前解決」の判断が変わる。着手はフェーズ1の Pi-hole 移設以降になるが、結論によって設計が変わるため早めに調べる価値がある
-- [ ] **監視**：kube-prometheus-stack。未着手
+- [ ] **監視**：kube-prometheus-stack。あわせて Hubble のメトリクスとフローの保存も設計する。いまは cilium agent のリングバッファ 4095 件だけで、Pod が入れ替わると消える。R7 では 7844 の drop と backend の 403 をどちらも Hubble の verdict で決着させており、推測に頼らず切り分けられる価値は確認できている。未着手
 - [ ] **バックアップ**：Git リポジトリ + DS923+ のスナップショット。未着手
 - [ ] **MS-03 の NPU**：`intel_vpu` の probe が `-EIO` で失敗する。使う段になったらカーネルの更新か BIOS 設定を確認する
 - [ ] **Intel Quick Sync のパススルー**：Intel Device Plugin が `xe` と NPU のデバイスをどう公開するかを確認する。初期スコープ外
