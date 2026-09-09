@@ -1,3 +1,10 @@
 creation_rules:
+  # Kubernetes のマニフェストは data と stringData だけを暗号化する。
+  # ファイル全体を暗号化すると apiVersion や kind まで隠れ、kustomize が
+  # リソースとして読めなくなる。差分もレビューできなくなる。
+  - path_regex: kubernetes/.*\.sops\.ya?ml$
+    encrypted_regex: ^(data|stringData)$
+    age: age1k03mxpgxqe2kn2m4njawxjjd9mt70t90q6qzvrwn4eeqxpk6ad5sy9pm0j
+  # talsecret.sops.yaml など、Kubernetes のリソースでないものは全体を暗号化する。
   - path_regex: .*\.sops\.ya?ml$
     age: age1k03mxpgxqe2kn2m4njawxjjd9mt70t90q6qzvrwn4eeqxpk6ad5sy9pm0j
