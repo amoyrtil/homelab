@@ -304,7 +304,7 @@ Talos の kubelet はコンテナで動くため、これがないと CSI が作
 - **シークレット管理**：SOPS + age。暗号化済み Secret を Git にコミットする。Kubernetes のマニフェストは `encrypted_regex: ^(data|stringData)$` で `data` と `stringData` だけを暗号化する。age の秘密鍵は `flux-system` の `sops-age` Secret として手で入れる（[knowledge/flux-bootstrap.md](knowledge/flux-bootstrap.md)）
 - **リポジトリ構成**：`onedr0p/cluster-template` に準拠する
 - **ツール管理**：mise。ローカル環境の再現性を確保する
-- **インフラのプロビジョニング**：Terraform。UniFi と Cloudflare の設定をコードにする。provider は `ubiquiti-community/unifi` と `cloudflare/cloudflare`。state は Cloudflare R2 に置く。クラスター内には置けない（[knowledge/terraform-provisioning.md](knowledge/terraform-provisioning.md)）
+- **インフラのプロビジョニング**：OpenTofu。UniFi と Cloudflare の設定をコードにする。provider は `ubiquiti-community/unifi` と `cloudflare/cloudflare`。root モジュールは provider ごとに `terraform/cloudflare/` と `terraform/unifi/` に分ける。state は Cloudflare R2 に置き、OpenTofu 本体の機能で暗号化する。クラスター内には置けない。実行は手元からで、資格情報は `terraform/secrets.sops.env` を `sops exec-env` で渡す（[knowledge/terraform-provisioning.md](knowledge/terraform-provisioning.md)）
 
 ### リソースの所有権
 

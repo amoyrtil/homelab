@@ -106,3 +106,106 @@ API から読み出せない値だが、手元のファイルに残っている�
 
 未着手の VLAN 10、30、40、50、60 は import が要らない。
 Terraform の最初の対象をここに置けば、既存の状態と突き合わせずに provider の挙動を確かめられる。
+
+## 実行バイナリは OpenTofu にした
+
+ここから下は 2026年9月10日、R8 で実際に組んだときの記録である。
+
+Terraform と OpenTofu は provider レジストリを共有しており、`ubiquiti-community/unifi` も `cloudflare/cloudflare` もどちらからでも同じものが入る。
+ライセンスは OpenTofu が MPL-2.0、Terraform が BSL 1.1 である。
+
+決め手は state の暗号化だった。
+OpenTofu は state と plan の暗号化を本体に持つ。
+この構成の state には Tunnel の `tunnel_secret` が平文で入るため、R2 のトークンが漏れた時点で資格情報まで漏れる。
+本体で暗号化しておけば、その露出を潰せる。
+
+名前は「terraform」に寄せる。
+バイナリ名が `tofu` である一方、ディレクトリ名、バケット名、state のキー、mise のタスク名は自由に決められる。
+これらを「terraform」で揃え、`tofu` はコマンドを打つときだけ現れるようにした。
+
+## root モジュールを provider ごとに分ける
+
+`terraform/cloudflare/` と `terraform/unifi/` を別の root モジュールにし、state のキーも `cloudflare/terraform.tfstate` と `unifi/terraform.tfstate` に分ける。
+
+UniFi provider は controller への到達を要求する。
+単一の root に両方を置くと、UniFi のリソースが1つ入った時点で、Cloudflare だけを変えるときにも controller への到達と認証情報が要るようになる。
+宅内にいなければ Cloudflare の `plan` すら回らない。
+
+## 実行と認証情報
+
+手元から回す。
+UniFi provider が controller のローカル管理者アカウントと宅内 LAN への到達を要求するため、CI からは UniFi 側が原理的に届かない。
+実行場所を provider ごとに分けると、認証情報の置き場所も2つに分かれる。
+
+資格情報は `terraform/secrets.sops.env` に dotenv 形式で置き、SOPS で暗号化して Git に入れる。
+`.sops.yaml` に `.*\.sops\.env$` のルールを足した。
+呼び出しは mise のタスクにまとめてある。
+
+```console
+$ mise run terraform cloudflare init
+$ mise run terraform cloudflare plan
+```
+
+第1引数が root モジュール名であり、残りはそのまま `tofu` に渡る。
+
+### 環境変数から AWS の名前を消す
+
+R2 は S3 互換 API を提供しており、OpenTofu からは `backend "s3"` で使う。
+その backend は資格情報を `AWS_ACCESS_KEY_ID` と `AWS_SECRET_ACCESS_KEY` からしか読まない。
+AWS を使っていないのにその名前が出てくると、読むたびに何の話かを確かめ直すことになる。
+
+`.mise/tasks/terraform` が名前を写し、AWS の語をこのスクリプトの中だけに閉じ込める。
+
+| `secrets.sops.env` が持つ名前 | 写す先 |
+| --- | --- |
+| `CLOUDFLARE_TERRAFORM_API_TOKEN` | `CLOUDFLARE_API_TOKEN` |
+| `CLOUDFLARE_ACCOUNT_ID` | `TF_VAR_cloudflare_account_id` |
+| `CLOUDFLARE_TUNNEL_SECRET` | `TF_VAR_tunnel_secret` |
+| `CLOUDFLARE_R2_ACCESS_KEY_ID` | `AWS_ACCESS_KEY_ID` |
+| `CLOUDFLARE_R2_SECRET_ACCESS_KEY` | `AWS_SECRET_ACCESS_KEY` |
+| `TERRAFORM_STATE_PASSPHRASE` | `TF_VAR_state_passphrase` |
+
+名前を完全に消す道もあるが、採らない。
+backend ブロックに変数で資格情報を書けば `AWS_` を使わずに済む一方、OpenTofu 自身がその方法を推奨していない。
+`init` が backend の設定を `.terraform/terraform.tfstate` へ平文で書き出すため、名前を消す代わりに資格情報がディスクに残る。
+
+## R2 バックエンド
+
+R2 が持たない S3 の機構を順に切る。
+資格情報の検証、メタデータ API、リージョン名の検証、アカウント ID の照会、チェックサム、仮想ホスト形式の URL の6つである。
+`region` には S3 互換 API の必須項目を埋めるためだけに `auto` を置く。
+
+ロックは `use_lockfile` の条件付き書き込みで行う。
+DynamoDB 相当の外部テーブルは要らない。
+
+エンドポイントの URL にはアカウント ID が入る。
+リポジトリが public であるため、値は変数から与える。
+OpenTofu は backend ブロックで変数と local を使えるので、`init` の時点で解決できる値であれば書ける。
+偽のアカウント ID で `init` を回し、エンドポイントが展開されて TLS の握手まで到達することを確認した。
+
+### バケットは Terraform で管理しない
+
+state を置く器を state で管理すると、壊したときに足場がなくなる。
+バケット（`homelab-terraform-state`）は手で作り、コードの管理対象から外す。
+
+## state の暗号化
+
+`key_provider "pbkdf2"` でパスフレーズから鍵を作り、`method "aes_gcm"` で state と plan の両方を暗号化する。
+どちらにも `enforced = true` を立てる。
+空のバケットから始めるため、平文の state を読むための `fallback` は要らない。
+
+パスフレーズを失うと state を読めなくなる。
+ただし、ここで管理するリソースはすべて import で回収できるため、復旧はできる。
+
+## Tunnel の回収
+
+Tunnel の名前は `blackwall`、UUID は `cloudflared tunnel list` で確認できる。
+`config_src` に `local` を指定し、`cloudflare_zero_trust_tunnel_cloudflared_config` は作らない。
+ingress ルールはクラスターの ConfigMap が持ち、Flux が反映する。
+`_config` を作ると Zero Trust ダッシュボード側にも設定が生まれ、所有者が2つになる。
+
+`tunnel_secret` に注意が要る。
+API から読み出せないため、import しても state には入らない。
+手元の値を与えたときに `plan` が差分ゼロになるかは provider の実装によるので、`apply` の前に必ず `plan` を読む。
+置き換えの差分が出たままこれを流すと、資格情報が変わって動いているトンネルが落ちる。
+その場合は `lifecycle` の `ignore_changes` に逃がす。

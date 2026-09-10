@@ -10,8 +10,8 @@ homelab に Kubernetes クラスターと GitOps ベースの CI/CD を整備す
 
 ## 現在地
 
-**リハーサル（手順2）の R7 まで完了。次は R8。**
-最終更新は 2026年9月9日である。
+**リハーサル（手順2）の R7 まで完了。R8 に着手している。**
+最終更新は 2026年9月10日である。
 
 ### いまのクラスターの状態
 
@@ -63,16 +63,26 @@ DHCP Guarding も入れていない。VLAN 120 は対象外でよいが、機器
 
 ### 次にやること
 
-**R8: UniFi と Cloudflare を Terraform に移す。**
+**R8: UniFi と Cloudflare を Terraform に移す。Cloudflare 側から進めている。**
 
+実行バイナリは OpenTofu にした。
+`terraform/cloudflare/` に R2 バックエンド、state の暗号化、Tunnel のリソースを置き、`tofu validate` まで通してある。
+資格情報は `terraform/secrets.sops.env` に置き、`sops exec-env` で渡す。
+呼び出しは `mise run terraform cloudflare <コマンド>` である。
+判断の記録は [knowledge/terraform-provisioning.md](knowledge/terraform-provisioning.md) にある。
+
+ここから先は Cloudflare 側の準備が要る。
+
+- [ ] Terraform 用の API トークンを作る。権限は Account の Cloudflare Tunnel（新しい UI では「Cloudflare One Connector: cloudflared」）の Edit、Zone の Zone Settings の Edit、Zone の Zone の Read
+- [ ] R2 バケット `homelab-terraform-state` と、そのバケットに限定した R2 API トークンを作る
+- [ ] `terraform/secrets.sops.env` を作る。雛形は `terraform/secrets.example.env` にある
+- [ ] `init` と `import` で Tunnel を回収し、`plan` が差分ゼロになることを確かめる
+- [ ] ゾーン設定の現在値を読み、その値のまま `cloudflare_zone_setting` に書いて import する
+
+**UniFi 側はトークンがないため後回しにしている。**
 未着手の VLAN 10、30、40、50、60 から始める。
 既存の状態と突き合わせずに provider の挙動を確かめられるためである。
-そのうえで VLAN 20、VLAN 120、`Blackwall-BGP`、Cloudflare Tunnel を import で回収する。
-
-state は Cloudflare R2 に置く。
-着手前に決めることが1つ残っている。Terraform の実行場所と認証情報の渡し方である。
-
-調査の記録は [knowledge/terraform-provisioning.md](knowledge/terraform-provisioning.md) にある。
+そのうえで VLAN 20、VLAN 120、`Blackwall-BGP` を import で回収する。
 `unifi_firewall_policy` の `index` が read-only であり、ポリシーの順序を Terraform から管理できない点に注意する。
 
 cloudflared の egress を絞る `CiliumNetworkPolicy` は R7 のあとに入れた。
@@ -124,7 +134,7 @@ R1 から R4 までで踏んだ落とし穴は、**いずれも Cilium 側にあ
 - [x] **R5: Longhorn をワーカーにのみ展開する**（2026年9月9日 完了）
 - [x] **R6: Flux Operator と SOPS**（2026年9月9日 完了）
 - [x] **R7: cert-manager、Cloudflare Tunnel、external-dns**（2026年9月9日 完了）
-- [ ] **R8: UniFi と Cloudflare を Terraform に移す**（未着手の VLAN から始め、既存リソースを import で回収する）
+- [ ] **R8: UniFi と Cloudflare を Terraform に移す**（Cloudflare 側に着手済み。UniFi 側はトークン待ちで、未着手の VLAN から始める）
 - [ ] **R9: アーキテクチャと実装の監査**（複数の視点でレビューする。詳細は「[R9 の進め方](#r9-の進め方)」節）
 
 R1 から R3 が山場である。
@@ -401,7 +411,6 @@ Backup DNS はクラスターと無関係に建てられるので、順番を入
 | MS-03 の接続 NIC | X710 の SFP+ か RTL8127 の RJ-45 か。USW-Pro-XG-10-PoE の SFP28 ポートは2口しかなく、うち1口は UCG-Fiber への上流で埋まる | 本設置の配線時 |
 | 10GbE 配線の到達範囲 | トポロジ図で USW-Pro-XG-10-PoE のポート 5-10（DS923+、MS-03 x2、サーバーノード x3）が `GbE` と表記されている。同機は全 RJ45 ポートが 10GbE で、MS-03 は 10G SFP+ を2口持つ。機器側 NIC の制約を指しているのか記入漏れなのかを確定させる | 本設置の配線時 |
 | フェーズ2で使う S100-WLP の個体 | morty / jerry / rick。3台のうち2台は内蔵 I226-V に物理層障害がある。容量とストレージ特性とあわせて選ぶ | フェーズ2 |
-| Terraform の実行場所と認証情報の渡し方 | 手元から回すか CI から回すか。UniFi provider は controller のローカル管理者アカウントを要求し、Cloudflare provider は Tunnel を作れるトークンを要求する。どちらも Git に平文で置けないため、`sops exec-env` で渡すか別の仕組みを使うかを決める | R8 の着手前 |
 
 ### いずれ回収する項目
 
