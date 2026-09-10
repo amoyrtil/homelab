@@ -49,7 +49,7 @@ homelab の構築過程で行った検証と、そこで得た知見の置き場
 - **クラスターを立てる順序は4箇所で入れ替えられない。** `cniConfig: none` は構築時にしか効かず、Gateway API の CRD は Cilium より先、Cilium は flux-operator より先、`sops-age` は `FluxInstance` より先である。
 - **UniFi の Terraform provider は `ubiquiti-community/unifi` に移っている。** `paultyng/unifi` は 2023年で更新が止まり、Zone-Based Firewall を扱えない。
 - **`unifi_firewall_policy` の順序は Terraform から管理できない。** `index` が read-only であり、ポリシーはゾーンペアの末尾に追加される。順序に依存しない設計にするか、UI で並べ替える。
-- **Cloudflare の Tunnel は CLI で作っても import できる。** `tunnel_secret` は provider の入力属性で、その値は `cloudflared tunnel create` が書く credentials ファイルに残っている。
+- **Tunnel の import では `tunnel_secret` を渡さない。** 渡すと in-place の更新が1件出て稼働中の Tunnel へ書き込みが走る。渡さなければ差分ゼロの純粋な import になり、state にも秘密が入らない。値はクラスターの `cloudflared-credentials` にある。
 - **Terraform の state はクラスター内に置けない。** クラスターの前提となるネットワークを Terraform が作るため循環依存になる。Cloudflare R2 に置く。
 - **Cloudflare のサービス用 DNS レコードは external-dns の所有物である。** Terraform が同じ名前を握ると互いに消し合う。Terraform が持つのは apex や MX のように external-dns が触らないものだけ。
 - **公開のスイッチは `HTTPRoute` の `parentRefs` に持たせる。** external Gateway に繋がったものだけを external-dns（Cloudflare 系統）に見せれば、繋がないサービスは公開 DNS に載らない。

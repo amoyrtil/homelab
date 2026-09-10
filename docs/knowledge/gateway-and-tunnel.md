@@ -91,6 +91,7 @@ namespace 間で Secret を複製する仕組みは入れていない。
 
 **locally-managed で作る。**
 `cloudflared tunnel create` が作る資格情報を SOPS で暗号化して Git に置き、ingress ルールは ConfigMap に持つ。
+Tunnel そのものは R8 で Terraform の管理下に移し、CLI は使わなくなった（[terraform-provisioning.md](terraform-provisioning.md)）。
 Zero Trust ダッシュボードで設定を持たせる remotely-managed だと、何を公開しているかが Git に残らない。
 
 ingress ルールは自分のドメインだけを外部 Gateway に流し、末尾を `http_status:404` で閉じる。

@@ -101,8 +101,11 @@ DS923+ の S3 互換ストレージも宅内で完結する点では候補にな
 | Cloudflare Tunnel | `cloudflare_zero_trust_tunnel_cloudflared` | secret の指定が要る |
 
 **CLI で作った Tunnel も import できる。**
-`tunnel_secret` は provider の入力属性であり、その値は `cloudflared tunnel create` が書く `~/.cloudflared/<UUID>.json` の `TunnelSecret` である。
-API から読み出せない値だが、手元のファイルに残っているため import 後に指定できる。
+`tunnel_secret` は provider の入力属性であり、API から読み出せない。
+その値は `cloudflared tunnel create` が書く credentials ファイルにあり、同じものがクラスターの `cloudflared-credentials` として SOPS 暗号化で Git に入っている。
+
+ただし、実際に回収したときには渡さないほうがよいと分かった。
+「[Tunnel の回収](#tunnel-の回収)」にある。
 
 未着手の VLAN 10、30、40、50、60 は import が要らない。
 Terraform の最初の対象をここに置けば、既存の状態と突き合わせずに provider の挙動を確かめられる。
@@ -175,8 +178,13 @@ $ rm terraform/secrets.env
 $ sops -d terraform/secrets.sops.env | cut -d= -f1
 ```
 
-`CLOUDFLARE_ACCOUNT_ID` と `CLOUDFLARE_TUNNEL_SECRET` は `~/.cloudflared/<Tunnel UUID>.json` の `AccountTag` と `TunnelSecret` にある。
-`jq` で取り出せば、画面に出さずに書き込める。
+`CLOUDFLARE_ACCOUNT_ID` と `CLOUDFLARE_TUNNEL_ID` は、クラスターの `cloudflared-credentials` にある `credentials.json` の `AccountTag` と `TunnelID` から取れる。
+
+```console
+$ sops -d kubernetes/apps/network/cloudflared/app/credentials.sops.yaml
+```
+
+`jq` に通せば、画面に出さずに書き込める。
 
 ### 環境変数から AWS の名前を消す
 
@@ -229,7 +237,8 @@ state を置く器を state で管理すると、壊したときに足場がな�
 
 ## Tunnel の回収
 
-Tunnel の名前は `blackwall`、UUID は `cloudflared tunnel list` で確認できる。
+Tunnel の名前は `blackwall` である。
+UUID は `mise run terraform cloudflare output tunnel_id` で確認できる。
 `config_src` に `local` を指定し、`cloudflare_zero_trust_tunnel_cloudflared_config` は作らない。
 ingress ルールはクラスターの ConfigMap が持ち、Flux が反映する。
 `_config` を作ると Zero Trust ダッシュボード側にも設定が生まれ、所有者が2つになる。
@@ -251,6 +260,20 @@ API から読み出せない値であり、import しても state に入らな�
 import には `import` ブロックを使う。
 `id` に `${var.cloudflare_account_id}/${var.tunnel_id}` を書けば、アカウント ID と Tunnel の UUID を Git に置かずに済む。
 CLI の `tofu import` では、資格情報を復号するラッパーの中で引数を組み立てることになり、この2つが平文で残る。
+
+### cloudflared の CLI は使わない
+
+Tunnel の所有者を Terraform に一本化した以上、CLI が使える状態にあることは所有権の境界を崩す経路を1本残すことになる。
+mise から外し、`~/.cloudflared` も消した。
+
+| 用途 | 代替 |
+| --- | --- |
+| Tunnel の作成 | `cloudflare_zero_trust_tunnel_cloudflared` |
+| UUID の確認 | `mise run terraform cloudflare output tunnel_id` |
+| コネクション数の確認 | API の `/accounts/<account_id>/cfd_tunnel/<tunnel_id>` |
+
+資格情報は失われない。
+`AccountTag`、`Endpoint`、`TunnelID`、`TunnelSecret` の4つとも `cloudflared-credentials` に入っており、Tunnel を作り直すときはここから `credentials.json` を組み立てられる。
 
 ### 回収の実測（2026年9月10日）
 
