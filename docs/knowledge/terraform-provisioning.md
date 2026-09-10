@@ -148,6 +148,36 @@ $ mise run terraform cloudflare plan
 
 第1引数が root モジュール名であり、残りはそのまま `tofu` に渡る。
 
+### 資格情報のファイルを作る
+
+平文をリポジトリにも会話にも残さずに作る。
+
+`sops terraform/secrets.sops.env` は、そのファイル名で `.sops.yaml` のルールに当たり、エディタを開いて保存時に暗号化する。
+平文はディスクに残らない。
+`terraform/secrets.example.env` の中身を貼り、値を埋めればよい。
+
+先に平文で書きたい場合は `terraform/secrets.env` を使う。
+gitignore 対象であり、暗号化したら消す。
+
+```console
+$ sops --encrypt --filename-override terraform/secrets.sops.env \
+    --input-type dotenv --output-type dotenv terraform/secrets.env \
+    > terraform/secrets.sops.env
+$ rm terraform/secrets.env
+```
+
+`--filename-override` が要る。
+`.sops.yaml` のルールは入力ファイルのパスに対して当たるため、これがないと `secrets.env` では規則に当たらない。
+
+6つ揃っているかは、値を出さずに確かめられる。
+
+```console
+$ sops -d terraform/secrets.sops.env | cut -d= -f1
+```
+
+`CLOUDFLARE_ACCOUNT_ID` と `CLOUDFLARE_TUNNEL_SECRET` は `~/.cloudflared/<Tunnel UUID>.json` の `AccountTag` と `TunnelSecret` にある。
+`jq` で取り出せば、画面に出さずに書き込める。
+
 ### 環境変数から AWS の名前を消す
 
 R2 は S3 互換 API を提供しており、OpenTofu からは `backend "s3"` で使う。
