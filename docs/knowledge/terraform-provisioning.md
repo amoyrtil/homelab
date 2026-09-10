@@ -252,6 +252,35 @@ import には `import` ブロックを使う。
 `id` に `${var.cloudflare_account_id}/${var.tunnel_id}` を書けば、アカウント ID と Tunnel の UUID を Git に置かずに済む。
 CLI の `tofu import` では、資格情報を復号するラッパーの中で引数を組み立てることになり、この2つが平文で残る。
 
+### 回収の実測（2026年9月10日）
+
+| 確認項目 | 結果 |
+| --- | --- |
+| `apply` | `1 imported, 0 added, 0 changed, 0 destroyed` |
+| 直後の `plan` | `No changes` |
+| トンネルのコネクション | 4本を維持（`nrt09` `nrt12` `nrt14` `nrt15`） |
+| cloudflared の Pod | 再起動なし。再接続のログもなし |
+| R2 の state | 誤ったパスフレーズで `cipher: message authentication failed`。保管時に暗号化されている |
+| 公開 URL | Cloudflare Edge からオリジンまで到達。HTTP から HTTPS へ `301` |
+
+### アカウント所有のトークンは /user/tokens/verify で弾かれる
+
+トークンが通らないとき、`GET /client/v4/user/tokens/verify` で確かめたくなる。
+このエンドポイントはユーザー所有のトークンしか受け付けない。
+アカウント所有のトークンは、有効であっても `Invalid API Token` を返す。
+`GET /client/v4/accounts/<account_id>/tokens/verify` を使う。
+
+権限の過不足は、実際に使うエンドポイントを叩いて切り分けるのが速い。
+
+```console
+$ curl -s -H "Authorization: Bearer $TOKEN" \
+    "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT/cfd_tunnel/$TUNNEL" \
+    | jq -r 'if .success then "OK" else .errors[0].message end'
+```
+
+`Invalid API Token` は値が無効、`Not authorized` は値が有効で権限が足りない、と読み分けられる。
+Roll は値だけを差し替えるため、`Not authorized` を Roll で直そうとしても変わらない。
+
 ### sops unset はその場で書き換える
 
 `sops unset` は標準出力に何も出さず、対象のファイルを直接書き換える。

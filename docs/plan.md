@@ -66,17 +66,17 @@ DHCP Guarding も入れていない。VLAN 120 は対象外でよいが、機器
 **R8: UniFi と Cloudflare を Terraform に移す。Cloudflare 側から進めている。**
 
 実行バイナリは OpenTofu にした。
-`terraform/cloudflare/` に R2 バックエンド、state の暗号化、Tunnel のリソースを置き、`tofu validate` まで通してある。
+`terraform/cloudflare/` に R2 バックエンド、state の暗号化、Tunnel のリソースを置き、**Tunnel の import まで完了している**。
 資格情報は `terraform/secrets.sops.env` に置き、`sops exec-env` で渡す。
 呼び出しは `mise run terraform cloudflare <コマンド>` である。
 判断の記録は [knowledge/terraform-provisioning.md](knowledge/terraform-provisioning.md) にある。
 
 ここから先は Cloudflare 側の準備が要る。
 
-- [ ] Terraform 用の API トークンを作る。権限は Account の Cloudflare Tunnel（新しい UI では「Cloudflare One Connector: cloudflared」）の Edit、Zone の Zone Settings の Edit、Zone の Zone の Read
-- [ ] R2 バケット `homelab-terraform-state` と、そのバケットに限定した R2 API トークンを作る
-- [ ] `terraform/secrets.sops.env` を作る。雛形は `terraform/secrets.example.env` にある
-- [ ] `init` と `import` で Tunnel を回収し、`plan` が差分ゼロになることを確かめる
+- [x] Terraform 用の API トークンを作る。権限は Account の Cloudflare Tunnel（新しい UI では「Cloudflare One Connector: cloudflared」）の Edit、Zone の Zone Settings の Edit、Zone の Zone の Read
+- [x] R2 バケット `homelab-terraform-state` と、そのバケットに限定した R2 API トークンを作る
+- [x] `terraform/secrets.sops.env` を作る。雛形は `terraform/secrets.example.env` にある
+- [x] `init` と `import` で Tunnel を回収し、`plan` が差分ゼロになることを確かめる（2026年9月10日 完了）
 - [ ] ゾーン設定の現在値を読み、その値のまま `cloudflare_zone_setting` に書いて import する
 
 **UniFi 側はトークンがないため後回しにしている。**

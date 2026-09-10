@@ -18,6 +18,7 @@ age.key
 *.tfstate
 *.tfstate.*
 *.tfplan
+tfplan*
 crash.log
 
 # 暗号化前の平文シークレット
