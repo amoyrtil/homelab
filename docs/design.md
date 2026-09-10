@@ -304,7 +304,7 @@ Talos の kubelet はコンテナで動くため、これがないと CSI が作
 - **シークレット管理**：SOPS + age。暗号化済み Secret を Git にコミットする。Kubernetes のマニフェストは `encrypted_regex: ^(data|stringData)$` で `data` と `stringData` だけを暗号化する。age の秘密鍵は `flux-system` の `sops-age` Secret として手で入れる（[knowledge/flux-bootstrap.md](knowledge/flux-bootstrap.md)）
 - **リポジトリ構成**：`onedr0p/cluster-template` に準拠する
 - **ツール管理**：mise。ローカル環境の再現性を確保する
-- **インフラのプロビジョニング**：Terraform。UniFi と Cloudflare の設定をコードにする。provider は `ubiquiti-community/unifi` と `cloudflare/cloudflare`。state は Cloudflare R2 に置く。クラスター内には置けない（[knowledge/terraform-provisioning.md](knowledge/terraform-provisioning.md)）
+- **インフラのプロビジョニング**：OpenTofu。UniFi と Cloudflare の設定をコードにする。provider は `ubiquiti-community/unifi` と `cloudflare/cloudflare`。root モジュールは provider ごとに `terraform/cloudflare/` と `terraform/unifi/` に分ける。state は Cloudflare R2 に置き、OpenTofu 本体の機能で暗号化する。クラスター内には置けない。実行は手元からで、資格情報は `terraform/secrets.sops.env` を `sops exec-env` で渡す（[knowledge/terraform-provisioning.md](knowledge/terraform-provisioning.md)）
 
 ### リソースの所有権
 
@@ -322,6 +322,10 @@ Terraform と Flux と external-dns が同じリソースを触ると壊れる�
 
 DNS レコードの所有者が重なると、external-dns は TXT レジストリにない他人のレコードを管理外と見なして消しに行く。
 Terraform が持てるのは apex や MX、各種の検証レコードのように external-dns が触らないものだけである。
+
+Tunnel は Terraform だけが持つ。
+`cloudflared` の CLI は使わない。作成も更新も Terraform から行い、CLI を残すと所有権の境界を崩す経路が1本残る。
+資格情報はクラスターの `cloudflared-credentials` にあり、作り直すときはそこから `credentials.json` を組み立てる。
 
 Cloudflare の API トークンも用途で分ける。
 cert-manager と external-dns のランタイム用には `Zone:DNS:Edit` と `Zone:Zone:Read` を与える。

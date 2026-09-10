@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+#MISE description="復号した資格情報を環境変数に載せて OpenTofu を実行する"
+#
+#   mise run terraform cloudflare init
+#   mise run terraform cloudflare plan
+#
+# 第1引数は terraform/ 配下の root モジュール名である。
+#
+# S3 互換 API の資格情報は、backend が AWS_ 名の環境変数からしか読まない。
+# その名前をこのスクリプトに閉じ込める。secrets.sops.env にも .tf ファイルにも
+# 日常のコマンドにも AWS の語は出てこない。
+#
+# backend の設定に変数で秘密を渡す道もあるが、採らない。
+# init が backend の設定を .terraform/terraform.tfstate へ平文で書き出すため、
+# 名前を消す代わりに資格情報をディスクへ落とすことになる。
+set -euo pipefail
+
+root="${MISE_PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+
+module="${1:-}"
+if [ -z "$module" ]; then
+  echo "usage: mise run terraform <module> [tofu args...]" >&2
+  echo "example: mise run terraform cloudflare plan" >&2
+  exit 1
+fi
+shift
+
+dir="${root}/terraform/${module}"
+if [ ! -d "$dir" ]; then
+  echo "root モジュールがない: ${dir}" >&2
+  exit 1
+fi
+
+secrets="${root}/terraform/secrets.sops.env"
+if [ ! -f "$secrets" ]; then
+  echo "資格情報がない: ${secrets}" >&2
+  echo "terraform/secrets.example.env を写して sops で暗号化する。" >&2
+  exit 1
+fi
+
+exec sops exec-env "$secrets" "
+  export CLOUDFLARE_API_TOKEN=\"\$CLOUDFLARE_TERRAFORM_API_TOKEN\"
+  export AWS_ACCESS_KEY_ID=\"\$CLOUDFLARE_R2_ACCESS_KEY_ID\"
+  export AWS_SECRET_ACCESS_KEY=\"\$CLOUDFLARE_R2_SECRET_ACCESS_KEY\"
+  export TF_VAR_state_passphrase=\"\$TERRAFORM_STATE_PASSPHRASE\"
+  export TF_VAR_cloudflare_account_id=\"\$CLOUDFLARE_ACCOUNT_ID\"
+  export TF_VAR_tunnel_id=\"\$CLOUDFLARE_TUNNEL_ID\"
+  export TF_VAR_cloudflare_zone_id=\"\$CLOUDFLARE_ZONE_ID\"
+  exec tofu -chdir=$(printf '%q' "$dir")$(printf ' %q' "$@")
+"
