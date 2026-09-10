@@ -263,6 +263,35 @@ CLI の `tofu import` では、資格情報を復号するラッパーの中で�
 | R2 の state | 誤ったパスフレーズで `cipher: message authentication failed`。保管時に暗号化されている |
 | 公開 URL | Cloudflare Edge からオリジンまで到達。HTTP から HTTPS へ `301` |
 
+## ゾーン設定の回収
+
+`cloudflare_zone_setting` は設定1つで1リソースであり、挙げなかったものは UI の管理のまま残る。
+この構成の正しさに関わる7つだけを持つ。
+
+値は API で現在値を読み、その値のままコードに書いた。
+推測で書くと、`ssl` を取り違えた時点で公開中のサイトが壊れる。
+
+| 設定 | 値 |
+| --- | --- |
+| `always_use_https` | `on` |
+| `automatic_https_rewrites` | `on` |
+| `min_tls_version` | `1.0` |
+| `security_level` | `medium` |
+| `ssl` | `flexible` |
+| `tls_1_3` | `on` |
+| `websockets` | `on` |
+
+型が7つとも文字列であるため、`locals` のマップと `for_each` で書ける。
+`import` ブロックも `for_each` を取れるので、7件を2ブロックで回収できた。
+
+**`ssl` と `min_tls_version` は見直す価値がある。**
+Cloudflare がトンネル構成に推奨するのは Full 系であり、TLS 1.0 と 1.1 は非推奨である。
+ただし R8 はコード化であって設定の変更ではない。
+現在値のまま取り込み、判断は R9 の監査に送る。
+
+`apply` は `7 imported, 0 added, 0 changed, 0 destroyed` で、直後の `plan` は `No changes`。
+API で読み直した7つの値は apply の前後で変わらず、公開 URL も `301` と `404` のまま応答した。
+
 ### アカウント所有のトークンは /user/tokens/verify で弾かれる
 
 トークンが通らないとき、`GET /client/v4/user/tokens/verify` で確かめたくなる。

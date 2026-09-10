@@ -45,5 +45,6 @@ exec sops exec-env "$secrets" "
   export TF_VAR_state_passphrase=\"\$TERRAFORM_STATE_PASSPHRASE\"
   export TF_VAR_cloudflare_account_id=\"\$CLOUDFLARE_ACCOUNT_ID\"
   export TF_VAR_tunnel_id=\"\$CLOUDFLARE_TUNNEL_ID\"
+  export TF_VAR_cloudflare_zone_id=\"\$CLOUDFLARE_ZONE_ID\"
   exec tofu -chdir=$(printf '%q' "$dir")$(printf ' %q' "$@")
 "

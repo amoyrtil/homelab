@@ -17,3 +17,8 @@ variable "tunnel_id" {
   EOT
   type        = string
 }
+
+variable "cloudflare_zone_id" {
+  description = "ゾーンの ID。リポジトリが public であるため Git には置かない。"
+  type        = string
+}
