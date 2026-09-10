@@ -71,7 +71,7 @@ Service を作っても LB IP に届かず、ピアは `established` のまま�
 明示列挙へのフォールバックは要らない。
 ノードを増やしても UCG-Fiber 側の設定は変えずに済む。
 
-投入した設定は `bootstrap/ucg-fiber-bgp.conf` にある。
+投入した設定は `terraform/unifi/ucg-fiber-bgp.conf` にある。
 UniFi 側では設定に名前を付ける必要があり、`Blackwall-BGP` とした。
 リハーサル完了後にクラスターを `Blackwall` へ改名する予定に合わせている。
 

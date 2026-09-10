@@ -33,6 +33,7 @@ UniFi の VLAN とファイアウォール、Cloudflare の Tunnel と DNS は�
 
 **`unifi_bgp` は現在の構成をそのまま受け取れる。**
 公式ドキュメントの例が Cilium 向けの peer-group と `bgp listen range` そのものであり、UCG-Fiber に手で入れた `Blackwall-BGP` の内容を `config` 属性に移すだけで済む。
+実際に回収したときの記録は「[BGP の回収](#bgp-の回収)」にある。
 
 ### ポリシーの順序は provider から管理できない
 
@@ -126,7 +127,7 @@ DS923+ の S3 互換ストレージも宅内で完結する点では候補にな
 | 対象 | 回収先 | 備考 |
 | --- | --- | --- |
 | VLAN 20、VLAN 120 | `unifi_network` | |
-| `Blackwall-BGP` | `unifi_bgp` | FRR config は `bootstrap/ucg-fiber-bgp.conf` にある |
+| `Blackwall-BGP` | `unifi_bgp` | FRR config は `terraform/unifi/ucg-fiber-bgp.conf` にある |
 | Cloudflare Tunnel | `cloudflare_zero_trust_tunnel_cloudflared` | secret の指定が要る |
 
 **CLI で作った Tunnel も import できる。**
@@ -479,3 +480,53 @@ Cloudflare の `ssl = flexible` と同じ扱いで、現在値のまま取り込
 | DHCP プール | VLAN 20 のみ `.150-.250` と規定 | VLAN 20 以外は UniFi 既定の `.6-.254` |
 | mDNS | 「VLAN 30 と 40 で有効化する」 | 全 VLAN で有効 |
 | DHCP Guarding | 「VLAN 30 と 60 に価値がある」 | VLAN 20 のみ有効 |
+
+## BGP の回収
+
+`Blackwall-BGP` を `unifi_bgp` に回収した。
+コントローラーが保持していた config は、リポジトリにあった FRR の設定ファイルと 949 バイトすべてが一致していた。
+`file()` で読めば重複を作らずに差分ゼロにできる。
+
+### 設定ファイルは terraform/unifi/ に移した
+
+`bootstrap/` はクラスターに手で入れるものを置く場所である。
+FRR の設定はルーター側であり、所有者も Terraform になった。
+`terraform/unifi/ucg-fiber-bgp.conf` に移し、`config = file("${path.module}/ucg-fiber-bgp.conf")` で読む。
+
+インライン化はしない。
+同じ内容が2か所に増えるうえ、FRR の設定として単体で読めなくなる。
+
+### 構造化モードは import と噛み合わない
+
+provider は2つの書き方を持つ。
+
+| モード | 属性 |
+| --- | --- |
+| raw | `config` に FRR の設定をそのまま置く |
+| 構造化 | `asn`、`router_id`、`peers` からテンプレートで config を組み立てる |
+
+**import するなら raw を使う。**
+API はレンダリング済みの config しか保持せず、provider もそれを構造化の属性に読み戻さない（`bgp_resource.go` にその旨のコメントがある）。
+構造化モードで書くと、読み戻せない属性が state と設定のあいだで食い違ったままになる。
+
+### import ID はサイト名である
+
+BGP の設定はサイトごとの singleton であり、ネットワークのような ID を持たない。
+`import` ブロックの `id` にはサイト名（`default`）を書く。
+24桁の16進を渡すとオブジェクト ID として扱う経路も残っているが、サイト名のほうが意味が通る。
+
+`upload_file_name` はコントローラーが保持している。
+UI からアップロードしたときのファイル名であり、書かないと差分になる。
+
+### 回収の実測（2026年9月10日）
+
+| 確認項目 | 結果 |
+| --- | --- |
+| `apply` 前の `plan` | `1 to import, 0 to add, 0 to change, 0 to destroy` |
+| 直後の `plan` | `No changes` |
+| BGP ピア | `established` のまま。uptime 35時間12分を維持 |
+| 経路 | Received 2、Advertised 2 |
+
+**ピアの uptime が保たれていることが、書き込みが起きていない証拠になる。**
+コントローラーが FRR の設定を書き直せば、セッションは張り直しになって uptime が 0 に戻る。
+`0 to change` の plan であれば import は読み取りだけで完結する、という挙動をここでも確かめられた。

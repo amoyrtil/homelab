@@ -170,7 +170,8 @@ Cilium は `nodeSelector` で対象ノードを選ぶ。
 `allowSchedulingOnControlPlanes` が `false` であり、コントロールプレーンにワークロードを載せないためである。
 
 `bgp listen range` を UniFi が受け付けることは実機で確認済みである（[knowledge/bgp-peering.md](knowledge/bgp-peering.md)）。
-ルーター側の設定は `bootstrap/ucg-fiber-bgp.conf` に置き、UniFi 上では `Blackwall-BGP` という名前で登録する。
+ルーター側の設定は `terraform/unifi/ucg-fiber-bgp.conf` に置き、UniFi 上では `Blackwall-BGP` という名前で登録する。
+投入は Terraform が行う。
 Cilium 側の3つのリソースは `bootstrap/cilium-bgp.yaml` にある。
 
 ### 必要な設定
