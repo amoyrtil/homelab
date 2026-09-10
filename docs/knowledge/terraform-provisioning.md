@@ -40,8 +40,10 @@ UniFi の VLAN とファイアウォール、Cloudflare の Tunnel と DNS は�
 ポリシーは常にそのゾーンペアの末尾に追加され、supported API に並べ替えの操作がないため、provider からは順序を指定できない。
 
 Zone-Based Firewall のポリシーは評価順に意味がある。
-したがって、順序に依存しないポリシーの集合として設計するか、順序が必要な箇所は UI で並べ替える運用になる。
-design.md のゾーン間ポリシー表を書くときにこの制約が効く。
+中身を Terraform に載せても評価順は UI に残るため、1つの関心事の所有者が2つになる。
+
+**この制約を理由に、Zone-Based Firewall は Terraform の管理対象から外した。**
+design.md の VLAN 間ポリシー表は設計の記述として残し、実装は UI で行う。
 
 ## Cloudflare provider
 
@@ -60,7 +62,7 @@ Terraform と Flux と external-dns が同じリソースを触ると壊れる�
 
 | リソース | 所有者 |
 | --- | --- |
-| UniFi の VLAN、Zone-Based Firewall、BGP、ポートプロファイル | Terraform |
+| UniFi の VLAN、BGP | Terraform |
 | Cloudflare のゾーン設定、Tunnel、API トークン、Access のアプリとポリシー | Terraform |
 | Cloudflare のサービス用 DNS レコード | external-dns |
 | Tunnel の ingress ルール | クラスターの ConfigMap（Flux） |
@@ -77,6 +79,33 @@ Terraform が持てるのは apex や MX、各種の検証レコードのよう�
 **cert-manager と external-dns のランタイム用トークンと、Terraform 用のトークンは分ける。**
 前者に要るのは `Zone:DNS:Edit` と `Zone:Zone:Read` で、後者は Tunnel を作るため `Account:Cloudflare Tunnel:Write` を含む。
 権限の範囲もライフサイクルも違う。
+
+### 何を Terraform に載せるか
+
+所有者を決める前に、そもそも載せるかを決める。
+条件は2つあり、どちらかを満たすものだけを対象とする。
+
+| 条件 | 例 |
+| --- | --- |
+| homelab のためだけに存在する | Cloudflare Tunnel、BGP のピアリング |
+| 同じ形のものを量産する必要がある | VLAN、Cloudflare のゾーン設定 |
+
+**スイッチのポートプロファイルは対象外とした。**
+宅内のスイッチの設定であって homelab に固有ではなく、ポートの種類も増えない。
+1度作れば済むものをコードに写しても、state と UI の二重管理が増えるだけで得るものがない。
+
+**Zone-Based Firewall も対象外とした。**
+ポリシーは量産する要素であり、条件のうえでは当てはまる。
+外したのは provider が評価順を扱えないためである。
+「[ポリシーの順序は provider から管理できない](#ポリシーの順序は-provider-から管理できない)」にある。
+
+ゾーン（`unifi_firewall_zone`）には順序の制約がない。
+ただし数が増えず homelab 固有でもないため、この基準では同じく対象外になる。
+ポリシーだけを外してゾーンを残す形も、片方だけをコードにする分かりにくさが残る。
+
+`ubiquiti-community/unifi` は `unifi_setting` や `unifi_wlan` のように、
+コントローラーのほとんどの設定を扱えるだけのリソースを持っている。
+扱えることと載せるべきことは別である。
 
 ## state をどこに置くか
 

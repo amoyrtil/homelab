@@ -64,7 +64,8 @@ S100-WLP は3台のうち2台の内蔵 I226-V に物理層障害があり、そ�
 
 BGP は UCG-Fiber に FRR 設定を投入済みである（UniFi 上の名前は `Blackwall-BGP`）。
 worker-1 とのピアが確立している。まだ Terraform には載せていない。
-Zone-Based Firewall のゾーンとポリシー、ポートプロファイルも Terraform の管理外である。
+Zone-Based Firewall のゾーンとポリシーも入れていない。
+これとスイッチのポートプロファイルは、そもそも Terraform に載せない方針とした（[design.md の「リソースの所有権」](design.md#リソースの所有権)）。
 
 **設計と現状の差分が3つ残っている。**
 R8 はコード化であって設定の変更ではないため、現在値のまま取り込み、判断は R9 に送った。
@@ -94,13 +95,11 @@ Cloudflare 側の作業は終わっている。
 - [x] ゾーン設定の現在値を読み、その値のまま `cloudflare_zone_setting` に書いて import する（2026年9月10日 完了）
 
 **UniFi 側は VLAN まで終わっている。**
-残りは BGP、Zone-Based Firewall、ポートプロファイルである。
+残りは BGP だけである。
 
 - [x] UniFi の API キーを作る。Terraform 専用のローカル管理者を作り、その管理者から発行する（2026年9月10日 完了）
 - [x] `terraform/unifi/` を作り、VLAN 7件を import する（2026年9月10日 完了）
 - [ ] `Blackwall-BGP` を `unifi_bgp` に回収する。FRR config は `bootstrap/ucg-fiber-bgp.conf` にある
-- [ ] Zone-Based Firewall のゾーンとポリシーを載せる。`unifi_firewall_policy` の `index` が read-only であり、ポリシーの順序を Terraform から管理できない点に注意する
-- [ ] ポートプロファイルを載せる
 
 cloudflared の egress を絞る `CiliumNetworkPolicy` は R7 のあとに入れた。
 Gateway 宛の通信は L4 では止まらないが、Envoy が upstream を選んだ時点で backend に対して評価されるため、**公開する `HTTPRoute` の backend を列挙すれば塞げる**。
@@ -156,7 +155,7 @@ R1 から R4 までで踏んだ落とし穴は、**いずれも Cilium 側にあ
 - [x] **R5: Longhorn をワーカーにのみ展開する**（2026年9月9日 完了）
 - [x] **R6: Flux Operator と SOPS**（2026年9月9日 完了）
 - [x] **R7: cert-manager、Cloudflare Tunnel、external-dns**（2026年9月9日 完了）
-- [ ] **R8: UniFi と Cloudflare を Terraform に移す**（Cloudflare 側と UniFi の VLAN が完了。BGP、Zone-Based Firewall、ポートプロファイルが残る）
+- [ ] **R8: UniFi と Cloudflare を Terraform に移す**（Cloudflare 側と UniFi の VLAN が完了。BGP が残る）
 - [ ] **R9: アーキテクチャと実装の監査**（複数の視点でレビューする。詳細は「[R9 の進め方](#r9-の進め方)」節）
 
 R1 から R3 が山場である。
