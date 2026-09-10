@@ -23,7 +23,7 @@ terraform {
     region = "auto"
 
     endpoints = {
-      s3 = "https://${var.cloudflare_account_id}.r2.cloudflarestorage.com"
+      s3 = var.state_endpoint
     }
 
     # R2 が持たない S3 の機構を順に切る。

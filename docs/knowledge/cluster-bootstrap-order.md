@@ -75,7 +75,8 @@ kubectl apply -f bootstrap/cilium-networks.yaml   # LoadBalancer IP Pool
 kubectl apply -f bootstrap/cilium-bgp.yaml        # BGP の3リソース
 ```
 
-ルーター側の FRR 設定（`bootstrap/ucg-fiber-bgp.conf`）は UCG-Fiber に投入済みで、クラスターを作り直しても残る。
+ルーター側の FRR 設定（`terraform/unifi/ucg-fiber-bgp.conf`）は UCG-Fiber に投入済みで、クラスターを作り直しても残る。
+投入は Terraform が行う。
 `bgp listen range` でノードを待ち受けるため、ノードの IP が変わっても追従する。
 
 `cilium bgp peers` が `established` になれば通っている。

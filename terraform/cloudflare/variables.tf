@@ -1,5 +1,14 @@
 variable "cloudflare_account_id" {
-  description = "Cloudflare のアカウント ID。R2 のエンドポイントと Tunnel の所属先に使う。"
+  description = "Cloudflare のアカウント ID。Tunnel の所属先に使う。"
+  type        = string
+}
+
+variable "state_endpoint" {
+  description = <<-EOT
+    state を置く S3 互換ストレージのエンドポイント URL。
+    URL にアカウント ID が入り、リポジトリが public であるため Git には置かない。
+    値は .mise/tasks/terraform が組み立てて渡す。
+  EOT
   type        = string
 }
 

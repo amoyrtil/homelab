@@ -170,7 +170,8 @@ Cilium は `nodeSelector` で対象ノードを選ぶ。
 `allowSchedulingOnControlPlanes` が `false` であり、コントロールプレーンにワークロードを載せないためである。
 
 `bgp listen range` を UniFi が受け付けることは実機で確認済みである（[knowledge/bgp-peering.md](knowledge/bgp-peering.md)）。
-ルーター側の設定は `bootstrap/ucg-fiber-bgp.conf` に置き、UniFi 上では `Blackwall-BGP` という名前で登録する。
+ルーター側の設定は `terraform/unifi/ucg-fiber-bgp.conf` に置き、UniFi 上では `Blackwall-BGP` という名前で登録する。
+投入は Terraform が行う。
 Cilium 側の3つのリソースは `bootstrap/cilium-bgp.yaml` にある。
 
 ### 必要な設定
@@ -311,9 +312,22 @@ Talos の kubelet はコンテナで動くため、これがないと CSI が作
 Terraform と Flux と external-dns が同じリソースを触ると壊れる。
 所有者は1つに決める。
 
+**そもそも Terraform に載せるのは、2つの条件のどちらかを満たすものだけである。**
+homelab のためだけに存在するリソースか、VLAN のように同じ形のものを量産する必要があるリソースかである。
+どちらにも当たらないものは UI の管理のまま残す。
+1度作れば済むものをコードに写しても、state と UI の二重管理が増えるだけで得るものがない。
+
+スイッチのポートプロファイルはこの基準で対象外とする。
+宅内のスイッチの設定であって homelab に固有ではなく、数も増えない。
+
+**Zone-Based Firewall も対象外とする。**
+`unifi_firewall_policy` の `index` が read-only であり、ポリシーの評価順を Terraform から指定できない。
+中身はコード、評価順は UI という分割になり、1つの関心事の所有者が2つになる。
+[VLAN 間ポリシー](#vlan-間ポリシー)の表は設計の記述として残し、実装は UI で行う。
+
 | リソース | 所有者 |
 | --- | --- |
-| UniFi の VLAN、Zone-Based Firewall、BGP、ポートプロファイル | Terraform |
+| UniFi の VLAN、BGP | Terraform |
 | Cloudflare のゾーン設定、Tunnel、API トークン、Access のアプリとポリシー | Terraform |
 | Cloudflare のサービス用 DNS レコード | external-dns（Cloudflare 系統） |
 | 内部 DNS のサービス用レコード | external-dns（Pi-hole 系統） |
