@@ -234,8 +234,27 @@ Tunnel の名前は `blackwall`、UUID は `cloudflared tunnel list` で確認�
 ingress ルールはクラスターの ConfigMap が持ち、Flux が反映する。
 `_config` を作ると Zero Trust ダッシュボード側にも設定が生まれ、所有者が2つになる。
 
-`tunnel_secret` に注意が要る。
-API から読み出せないため、import しても state には入らない。
-手元の値を与えたときに `plan` が差分ゼロになるかは provider の実装によるので、`apply` の前に必ず `plan` を読む。
-置き換えの差分が出たままこれを流すと、資格情報が変わって動いているトンネルが落ちる。
-その場合は `lifecycle` の `ignore_changes` に逃がす。
+`tunnel_secret` は渡さない。
+API から読み出せない値であり、import しても state に入らないため、当初は手元の値を与える前提で書いていた。
+両方を実測して比べた。
+
+| `tunnel_secret` | `plan` の結果 |
+| --- | --- |
+| 渡す | `1 to import, 0 to add, 1 to change, 0 to destroy` |
+| 渡さない | `1 to import, 0 to add, 0 to change, 0 to destroy` |
+
+渡した場合の1件は置き換えではなく in-place の更新であり、トンネルが落ちるものではなかった。
+それでも渡さないほうを採る。
+稼働中の Tunnel への書き込みが起きず、state に秘密が入らないためである。
+値はクラスターの `cloudflared-credentials` にあり、Tunnel を作り直す段になれば取り出せる。
+
+import には `import` ブロックを使う。
+`id` に `${var.cloudflare_account_id}/${var.tunnel_id}` を書けば、アカウント ID と Tunnel の UUID を Git に置かずに済む。
+CLI の `tofu import` では、資格情報を復号するラッパーの中で引数を組み立てることになり、この2つが平文で残る。
+
+### sops unset はその場で書き換える
+
+`sops unset` は標準出力に何も出さず、対象のファイルを直接書き換える。
+出力をリダイレクトして書き戻す形で使うと、空のファイルで上書きすることになる。
+一度これで暗号化済みの資格情報を失った。
+鍵を1つ消したいときは `sops unset <file> '["KEY"]'` だけを実行する。

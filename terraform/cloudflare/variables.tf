@@ -9,11 +9,11 @@ variable "state_passphrase" {
   sensitive   = true
 }
 
-variable "tunnel_secret" {
+variable "tunnel_id" {
   description = <<-EOT
-    既存の Tunnel の資格情報。~/.cloudflared/<UUID>.json の TunnelSecret である。
-    API から読み出せないため、import しても state に入らない。値はこちらから与える。
+    既存の Tunnel の UUID。import の対象を指すために使う。
+    クラスターの cluster-secrets が持つ SECRET_CLOUDFLARE_TUNNEL_ID と同じ値であり、
+    リポジトリが public であるため Git には置かない。
   EOT
   type        = string
-  sensitive   = true
 }
