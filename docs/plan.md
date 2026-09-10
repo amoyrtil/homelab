@@ -108,7 +108,12 @@ external-dns の Pi-hole 系統はリハーサルでは扱わない。
 `KUBECONFIG` と `TALOSCONFIG` も `.mise/config.toml` で設定しているため、`cd` するだけで接続先がそろう。
 
 `talos/clusterconfig/` は gitignore 対象である。
-消えている場合は `cd talos && talhelper genconfig` で再生成する。
+消えている場合は `cd talos && talhelper genconfig` で machine config と `talosconfig` を再生成する。
+復号に age 鍵が要る。
+
+**`kubeconfig` だけは talhelper が作らない。**
+`talosctl kubeconfig` で取るものであり、クラスターが起動している必要がある。
+手元だけで揃うのは machine config と `talosconfig` までである。
 
 ## リハーサル
 
