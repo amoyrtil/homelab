@@ -107,8 +107,8 @@ DS923+ の S3 互換ストレージも宅内で完結する点では候補にな
 ただし、実際に回収したときには渡さないほうがよいと分かった。
 「[Tunnel の回収](#tunnel-の回収)」にある。
 
-未着手の VLAN 10、30、40、50、60 は import が要らない。
-Terraform の最初の対象をここに置けば、既存の状態と突き合わせずに provider の挙動を確かめられる。
+調査の時点では VLAN 10、30、40、50、60 が未着手であり、Terraform の最初の対象をそこに置く前提だった。
+実際に着手したときには7つとも UI で作り終えていたため、全数を import で回収する形になった。
 
 ## 実行バイナリは OpenTofu にした
 
@@ -172,7 +172,7 @@ $ rm terraform/secrets.env
 `--filename-override` が要る。
 `.sops.yaml` のルールは入力ファイルのパスに対して当たるため、これがないと `secrets.env` では規則に当たらない。
 
-6つ揃っているかは、値を出さずに確かめられる。
+どの鍵が入っているかは、値を出さずに確かめられる。
 
 ```console
 $ sops -d terraform/secrets.sops.env | cut -d= -f1
@@ -197,11 +197,27 @@ AWS を使っていないのにその名前が出てくると、読むたびに�
 | `secrets.sops.env` が持つ名前 | 写す先 |
 | --- | --- |
 | `CLOUDFLARE_TERRAFORM_API_TOKEN` | `CLOUDFLARE_API_TOKEN` |
-| `CLOUDFLARE_ACCOUNT_ID` | `TF_VAR_cloudflare_account_id` |
-| `CLOUDFLARE_TUNNEL_SECRET` | `TF_VAR_tunnel_secret` |
 | `CLOUDFLARE_R2_ACCESS_KEY_ID` | `AWS_ACCESS_KEY_ID` |
 | `CLOUDFLARE_R2_SECRET_ACCESS_KEY` | `AWS_SECRET_ACCESS_KEY` |
 | `TERRAFORM_STATE_PASSPHRASE` | `TF_VAR_state_passphrase` |
+| `CLOUDFLARE_ACCOUNT_ID` | `TF_VAR_state_endpoint`（URL に組み立てる）、`TF_VAR_cloudflare_account_id` |
+| `CLOUDFLARE_TUNNEL_ID` | `TF_VAR_tunnel_id` |
+| `CLOUDFLARE_ZONE_ID` | `TF_VAR_cloudflare_zone_id` |
+| `UNIFI_TERRAFORM_API_KEY` | `UNIFI_API_KEY` |
+
+`TF_VAR_` は宣言のない変数に対しては黙って無視される。
+両方の root モジュールに同じ環境変数を撒いても、Cloudflare 用の3つが UniFi 側で警告になることはない。
+
+**state の置き場のアカウント ID も同じ扱いにする。**
+backend のエンドポイントは `https://<アカウント ID>.r2.cloudflarestorage.com` であり、
+当初は両モジュールが `var.cloudflare_account_id` からこれを組み立てていた。
+その形だと、UniFi しか触らない root モジュールが `cloudflare_account_id` という名前の入力を要求することになる。
+state の置き場の都合が、管理対象の名前空間に漏れている。
+
+URL の組み立てをタスクに移し、`TF_VAR_state_endpoint` として渡す。
+root モジュールが受け取るのは「S3 互換ストレージのエンドポイント」までになった。
+`backend` の `skip_*` 群は R2 が持たない機構を切るためのもので、これは R2 固有の事情であるからモジュール側に残す。
+閉じ込めたのは値と変数の名前である。
 
 名前を完全に消す道もあるが、採らない。
 backend ブロックに変数で資格情報を書けば `AWS_` を使わずに済む一方、OpenTofu 自身がその方法を推奨していない。
@@ -339,3 +355,98 @@ Roll は値だけを差し替えるため、`Not authorized` を Roll で直そ�
 出力をリダイレクトして書き戻す形で使うと、空のファイルで上書きすることになる。
 一度これで暗号化済みの資格情報を失った。
 鍵を1つ消したいときは `sops unset <file> '["KEY"]'` だけを実行する。
+
+## VLAN の回収
+
+調査の時点で残っていた VLAN は着手までに UI で作り終えていたため、7つ（10、20、30、40、50、60、120）を全数 import した。
+Terraform に載せるのは VLAN を持つものだけである。
+Default（VLAN 1）は機器を収容せず、WAN は `unifi_wan` という別のリソースを持つため、どちらも UI の管理のまま残した。
+
+### 認証は Terraform 専用の管理者から発行した API キー
+
+provider は `api_key`、`username`、`password` の3つを取り、`api_key` を与えると残り2つを無視する。
+Terraform 専用のローカル管理者を作り、その管理者から API キーを発行した。
+キーは発行元の管理者の権限を継ぐため、権限の範囲と失効を1か所で扱える。
+
+**TLS の検証は切ることになる。**
+UCG-Fiber は `CN=unifi.local` の自己署名証明書を出し、発行者も自分自身であるため、ホスト名で繋いでも検証は通らない。
+provider は `ca_cert` に相当する属性を持たず、`allow_insecure` しかない。
+
+検証を切ると API キーが未検証の TLS に載る。
+宅内 LAN の1本に閉じるため許容した。
+外すにはコントローラーに正式な証明書を載せることになる。
+
+### import ID は名前で指せる
+
+`unifi_network` の import ID は3つの形を取る。
+
+| 形 | 例 |
+| --- | --- |
+| ID | `5dc28e5e9106d105bdc87217` |
+| サイト付きの ID | `bfa2l6i7:5dc28e5e9106d105bdc87217` |
+| 名前 | `name=LAN` |
+
+`name=` を使う。
+ObjectId でも指せるが、コードを読んだときにどの VLAN の話か分からない。
+
+### 現在値から設定を起こす
+
+`tofu plan -generate-config-out=<file>` が import ブロックの対象を読み、HCL を書き出す。
+UI で作ったものをコード化するとき、属性を1つずつ API と突き合わせずに済む。
+
+**ただし生成物はそのままでは `validate` を通らない。**
+コントローラーが `domain_name` を持たない VLAN に対して、生成された設定は `domain_name = ""` を書く。
+provider のバリデータは空文字を拒否するため、7件すべてがエラーになる。
+この属性は Optional かつ Computed であり、省略すればコントローラーの値に従うので、消せばよい。
+
+生成物は属性を50個ほど並べる。
+そのうち実際にリソースごとに違うのは `name`、`vlan`、`subnet`、`purpose`、`setting_preference`、`dhcp_server`、`dhcp_guarding` だけだった。
+残りは全件で同じ値であり、Optional かつ Computed であるから書かなくてよい。
+`locals` のマップと `for_each` で7件を1つのリソースブロックに畳んである。
+
+### auto_scale は Computed でも既定値が当たる
+
+**省略すると現在値を読まず、`true` を当てる。**
+7つとも `false` であるため、書かずに import すると `plan` が `7 to import, 0 to add, 7 to change, 0 to destroy` になる。
+取り込んだ直後に更新をかける plan であり、import としては失敗している。
+
+スキーマ上は Optional かつ Computed であり、省略すれば現在値に従うと読める。
+実際には provider が既定値を持っており、そちらが勝つ。
+`auto_scale = false` を明示して差分ゼロにした。
+
+**Computed であることは現在値が読まれる保証にならない。**
+同じ罠が他の属性にもあり得る。
+`-generate-config-out` の生成物と `plan` の差分を突き合わせて、消してよい属性かを1つずつ確かめるのが速い。
+
+### Guest の purpose はゾーンと結合している
+
+VLAN 60 は `purpose = "guest"` である。
+Zone-Based Firewall のコントローラーでは、この値を保てるのはそのネットワークが guest ゾーンに属しているあいだだけである。
+ゾーンから外すとコントローラーが `corporate` に書き戻し、apply が inconsistent result で落ちる。
+
+ゾーンはまだ Terraform に載せていない。
+`unifi_firewall_zone` を入れるまで UI の管理のまま置く。
+
+### 回収の実測（2026年9月10日）
+
+| 確認項目 | 結果 |
+| --- | --- |
+| `apply` 前の `plan` | `7 to import, 0 to add, 0 to change, 0 to destroy` |
+| `apply` | `7 imported` |
+| 直後の `plan` | `No changes` |
+| コントローラーの `networkconf` | apply の前後で10件を全フィールド比較して差分なし |
+| R2 の state | 誤ったパスフレーズで `cipher: message authentication failed` |
+
+import は読み取りだけで完結する。
+`0 to change` の plan であれば、コントローラーへの書き込みは1本も出ない。
+
+### 設計と現状の差分は R9 に送る
+
+コード化と設定の変更を混ぜない。
+Cloudflare の `ssl = flexible` と同じ扱いで、現在値のまま取り込んだ。
+
+| 項目 | design.md / plan.md の記述 | コントローラーの現在値 |
+| --- | --- | --- |
+| DHCP プール | VLAN 20 のみ `.150-.250` と規定 | VLAN 20 以外は UniFi 既定の `.6-.254` |
+| mDNS | 「VLAN 30 と 40 で有効化する」 | 全 VLAN で有効 |
+| DHCP Guarding | 「VLAN 30 と 60 に価値がある」 | VLAN 20 のみ有効 |

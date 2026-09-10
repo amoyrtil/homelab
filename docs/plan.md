@@ -49,29 +49,43 @@ S100-WLP は3台のうち2台の内蔵 I226-V に物理層障害があり、そ�
 
 ### いまのネットワークの状態
 
-VLAN 設計は実装の途中である。
-作業端末は VLAN 1（`192.168.1.0/24`）にいて、VLAN 20 と VLAN 120 だけが先に切られている。
+**VLAN は7つとも UniFi 上にあり、Terraform の state に入っている。**
+作業端末は VLAN 1（`192.168.1.0/24`）にいる。
 
-| 済んだこと | 内容 |
+| VLAN | 状態 |
 | --- | --- |
-| VLAN 20 | 作成済み。DHCP プールを `.150-250` に拡張済み |
-| VLAN 120 | 作成済み。ゲートウェイ `192.168.120.1` に作業端末から到達を確認 |
-| BGP | UCG-Fiber に FRR 設定を投入済み（UniFi 上の名前は `Blackwall-BGP`）。worker-1 とのピアが確立している |
+| 10 Management | DHCP プールは UniFi 既定の `.6-.254` |
+| 20 Server | DHCP プールを `.150-.250` に絞ってある。DHCP Guarding 有効 |
+| 30 Trusted | DHCP プールは `.6-.254` |
+| 40 Untrusted | 同上 |
+| 50 Camera | 同上 |
+| 60 Guest | 同上。`purpose` は `guest` で、guest ゾーンに属している |
+| 120 Service | DHCP は動かさない。ゲートウェイ `192.168.120.1` に作業端末から到達を確認 |
 
-VLAN 10、30、40、50、60 は未着手である。
-DHCP Guarding も入れていない。VLAN 120 は対象外でよいが、機器を収容する VLAN では有効にする価値がある（特に部屋の LAN ドロップがある VLAN 30 とゲスト用の VLAN 60）。
+BGP は UCG-Fiber に FRR 設定を投入済みである（UniFi 上の名前は `Blackwall-BGP`）。
+worker-1 とのピアが確立している。まだ Terraform には載せていない。
+Zone-Based Firewall のゾーンとポリシー、ポートプロファイルも Terraform の管理外である。
+
+**設計と現状の差分が3つ残っている。**
+R8 はコード化であって設定の変更ではないため、現在値のまま取り込み、判断は R9 に送った。
+
+| 項目 | 設計の記述 | 現在値 |
+| --- | --- | --- |
+| DHCP プール | VLAN 20 のみ `.150-.250` と規定 | VLAN 20 以外は UniFi 既定の `.6-.254` |
+| mDNS | VLAN 30 と 40 で有効化する | 全 VLAN で有効 |
+| DHCP Guarding | VLAN 30 と 60 に価値がある | VLAN 20 のみ有効 |
 
 ### 次にやること
 
-**R8: UniFi と Cloudflare を Terraform に移す。Cloudflare 側は完了した。**
+**R8: UniFi と Cloudflare を Terraform に移す。Cloudflare 側と UniFi の VLAN が完了した。**
 
 実行バイナリは OpenTofu にした。
-`terraform/cloudflare/` に R2 バックエンド、state の暗号化、Tunnel、ゾーン設定7件を置き、すべて差分ゼロで import 済みである。
+`terraform/cloudflare/` に R2 バックエンド、state の暗号化、Tunnel、ゾーン設定7件を、`terraform/unifi/` に VLAN 7件を置き、すべて差分ゼロで import 済みである。
 資格情報は `terraform/secrets.sops.env` に置き、`sops exec-env` で渡す。
-呼び出しは `mise run terraform cloudflare <コマンド>` である。
+呼び出しは `mise run terraform <root モジュール> <コマンド>` である。
 判断の記録は [knowledge/terraform-provisioning.md](knowledge/terraform-provisioning.md) にある。
 
-Cloudflare 側の作業はここまでで終わっている。
+Cloudflare 側の作業は終わっている。
 
 - [x] Terraform 用の API トークンを作る。権限は Account の Cloudflare Tunnel（新しい UI では「Cloudflare One Connector: cloudflared」）の Edit、Zone の Zone Settings の Edit、Zone の Zone の Read
 - [x] R2 バケット `homelab-terraform-state` と、そのバケットに限定した R2 API トークンを作る
@@ -79,11 +93,14 @@ Cloudflare 側の作業はここまでで終わっている。
 - [x] `init` と `import` で Tunnel を回収し、`plan` が差分ゼロになることを確かめる（2026年9月10日 完了）
 - [x] ゾーン設定の現在値を読み、その値のまま `cloudflare_zone_setting` に書いて import する（2026年9月10日 完了）
 
-**UniFi 側はトークンがないため後回しにしている。**
-未着手の VLAN 10、30、40、50、60 から始める。
-既存の状態と突き合わせずに provider の挙動を確かめられるためである。
-そのうえで VLAN 20、VLAN 120、`Blackwall-BGP` を import で回収する。
-`unifi_firewall_policy` の `index` が read-only であり、ポリシーの順序を Terraform から管理できない点に注意する。
+**UniFi 側は VLAN まで終わっている。**
+残りは BGP、Zone-Based Firewall、ポートプロファイルである。
+
+- [x] UniFi の API キーを作る。Terraform 専用のローカル管理者を作り、その管理者から発行する（2026年9月10日 完了）
+- [x] `terraform/unifi/` を作り、VLAN 7件を import する（2026年9月10日 完了）
+- [ ] `Blackwall-BGP` を `unifi_bgp` に回収する。FRR config は `bootstrap/ucg-fiber-bgp.conf` にある
+- [ ] Zone-Based Firewall のゾーンとポリシーを載せる。`unifi_firewall_policy` の `index` が read-only であり、ポリシーの順序を Terraform から管理できない点に注意する
+- [ ] ポートプロファイルを載せる
 
 cloudflared の egress を絞る `CiliumNetworkPolicy` は R7 のあとに入れた。
 Gateway 宛の通信は L4 では止まらないが、Envoy が upstream を選んだ時点で backend に対して評価されるため、**公開する `HTTPRoute` の backend を列挙すれば塞げる**。
@@ -98,7 +115,7 @@ external-dns の Pi-hole 系統はリハーサルでは扱わない。
 
 - [x] **1. テンプレートの評価** — `onedr0p/cluster-template` を採用するか判断する。記録は [knowledge/cluster-template-evaluation.md](knowledge/cluster-template-evaluation.md)
 - [ ] **2. リハーサル** — いま動いているクラスターで、フェーズ1の構成を通す。R1 から R7 まで完了。R8 と R9 が残る。詳細は「[リハーサル](#リハーサル)」節
-- [ ] **3. 知見の集約** — 2 の結果を `knowledge/` に記録する。R1 から R7 の分は [knowledge/](knowledge/) に反映済み
+- [ ] **3. 知見の集約** — 2 の結果を `knowledge/` に記録する。R1 から R7 と、R8 のうち終わった分は [knowledge/](knowledge/) に反映済み
 - [ ] **4. 規約の整備** — 命名規則など homelab 全体のルールを決め、プロジェクトルートの `CLAUDE.md` を更新する
 - [ ] **5. フェーズ1の構築** — EliteDesk 到着後、クラスターを本番として組み直す。UniFi と Cloudflare は R8 で書いた Terraform の構成をそのまま使う
 
@@ -139,7 +156,7 @@ R1 から R4 までで踏んだ落とし穴は、**いずれも Cilium 側にあ
 - [x] **R5: Longhorn をワーカーにのみ展開する**（2026年9月9日 完了）
 - [x] **R6: Flux Operator と SOPS**（2026年9月9日 完了）
 - [x] **R7: cert-manager、Cloudflare Tunnel、external-dns**（2026年9月9日 完了）
-- [ ] **R8: UniFi と Cloudflare を Terraform に移す**（Cloudflare 側に着手済み。UniFi 側はトークン待ちで、未着手の VLAN から始める）
+- [ ] **R8: UniFi と Cloudflare を Terraform に移す**（Cloudflare 側と UniFi の VLAN が完了。BGP、Zone-Based Firewall、ポートプロファイルが残る）
 - [ ] **R9: アーキテクチャと実装の監査**（複数の視点でレビューする。詳細は「[R9 の進め方](#r9-の進め方)」節）
 
 R1 から R3 が山場である。
@@ -158,7 +175,7 @@ R9 は検証ではなく監査である。
 
 | # | 対象 |
 | --- | --- |
-| 1 | ネットワーク設計。VLAN の割り当て、Zone-Based Firewall のポリシー、BGP、LB IPAM |
+| 1 | ネットワーク設計。VLAN の割り当て、Zone-Based Firewall のポリシー、BGP、LB IPAM。R8 で現在値のまま取り込んだ DHCP プール、mDNS、DHCP Guarding の妥当性を含む |
 | 2 | ノードの構成。`talconfig.yaml`、schematic、クラスターを立てる順序 |
 | 3 | GitOps の構成。Flux、SOPS、ディレクトリ規約、リポジトリ構成 |
 | 4 | 公開とセキュリティ。Gateway、Tunnel、証明書、NetworkPolicy、external-dns の所有権。R8 で回収したゾーン設定のうち `ssl = flexible` と `min_tls_version = 1.0` の妥当性を含む |
