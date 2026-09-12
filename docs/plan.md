@@ -455,16 +455,52 @@ cp-1 の USB NIC が 100 Mbit リンクであり、カプセル化の有無に�
 
 **この監査で実際に変えたもの。**
 
-| 対象 | 内容 |
-| --- | --- |
-| Cloudflare のゾーン設定 | `ssl` を `flexible` から `strict`、`min_tls_version` を `1.0` から `1.2` へ。apply 済み |
-| Cilium | `routingMode: native`、`autoDirectNodeRoutes`、`ipv4NativeRoutingCIDR`。クラスターに適用済み |
-| SOPS | バックアップ用の age 鍵を2本目の recipient として7ファイルに追加 |
-| external Gateway | `allowedRoutes` を `Selector` にし、`homelab/expose: "true"` を要求。**merge 後に有効になる**。ラベルは付与済み |
-| CI | `.github/workflows/validate.yaml` と `.github/renovate.json5` を新設 |
-| `terraform/unifi/firewall.tf` | ZBF のゾーン6つとポリシーを新設。apply はフェーズ1 |
+| 対象 | 内容 | 実環境 |
+| --- | --- | --- |
+| Cloudflare のゾーン設定 | `ssl` を `flexible` から `strict`、`min_tls_version` を `1.0` から `1.2` へ | 反映済み |
+| Cilium | `routingMode: native`、`autoDirectNodeRoutes`、`ipv4NativeRoutingCIDR` | 反映済み |
+| SOPS | バックアップ用の age 鍵を2本目の recipient として7ファイルに追加 | 反映済み |
+| external Gateway | `allowedRoutes` を `Selector` にし、`homelab/expose: "true"` を要求 | 反映済み |
+| `network` と `cert-manager` | Pod Security を `baseline` から `restricted` へ | 反映済み |
+| `FluxInstance` | `flux-system` への expose ラベルを `kustomize.patches` で当てる | 反映済み |
+| CI | `.github/workflows/validate.yaml` と `.github/renovate.json5` を新設 | 反映済み |
+| `main` のブランチ保護 | `validate.yaml` の2ジョブを必須ステータスチェックに | 反映済み |
+| `terraform/unifi/firewall.tf` | ZBF のゾーン6つとポリシーを新設 | **未 apply**。フェーズ1 |
 
 記録は [knowledge/cilium-routing-mode.md](knowledge/cilium-routing-mode.md)、[knowledge/terraform-provisioning.md](knowledge/terraform-provisioning.md)、[knowledge/gateway-and-tunnel.md](knowledge/gateway-and-tunnel.md)、[knowledge/flux-bootstrap.md](knowledge/flux-bootstrap.md)、[knowledge/longhorn-on-talos.md](knowledge/longhorn-on-talos.md) にある。
+
+### 監査そのものを5観点でレビューさせた
+
+監査したのも直したのも同じ書き手であり、観点を解釈した者が同じ解釈で「満たされた」と判定する形になっていた。
+観点1つにつきレビュアー1体を当てて差し戻した。
+
+**成果物に実際の欠陥が見つかった。**
+
+| 件 | 内容 |
+| --- | --- |
+| 結論の誤り | 「`main` のブランチ保護が無い」としたが有効だった。自動承認は push のたびに落ちる承認を付け直す装置であり、消すとマージができなくなる |
+| 空振り | `validate.yaml` の external HTTPRoute 検出が `grep -A3` の窓不足で1件も拾っていなかった |
+| 無効 | Renovate の `packageRules` が使えないフィールドを持ち、`kubernetesVersion` の更新 PR が永久に来ない状態だった |
+| 構造 | DoH 遮断が、同じ監査で書いた「許可だけ」の不変条件を壊す。見送りを決めた |
+| 計画に無し | SSID が VLAN なしで1本だけ残っていた。ZBF と同じ形の再発 |
+| 数え間違い | 「許可13本」は20本、「7つとも Internal」は6つ、「トークン3種」は2種 |
+
+あわせて、**リポジトリの設定側にあるものを2回見落とした**。
+ブランチ保護と CodeQL の default setup である。どちらも `.github/` に痕跡が無く、`gh api` で引いて初めて分かった。
+
+### merge した直後に公開 URL が落ちた
+
+`allowedRoutes` の `Selector` 化を merge したところ、`flux-webhook` の公開 DNS レコードが消えた。
+
+原因は `flux-system` の `homelab/expose=true` ラベルが剥がれたことである。
+flux-operator が Namespace を自分の inventory に持っており、reconcile のたびに自分の desired state を Apply して余所のラベルを落とす。
+
+**検証が足りていなかった。**
+「PSA の dry-run が警告を出さない」「`HTTPRoute` が `Accepted: True`」「公開 URL が `HTTP 404`」までは測ったが、
+どれも**いま効くこと**しか見ておらず、**残ること**を測っていなかった。
+
+対策は `FluxInstance` の `kustomize.patches` で当てる形にすることである。
+経緯と、external-dns が `allowedRoutes` を自分で評価する件は [knowledge/gateway-and-tunnel.md](knowledge/gateway-and-tunnel.md#ラベルを手で付けると剥がれる)にある。
 
 **入れないことを決めたものもある。**
 Talos のディスク暗号化（[knowledge/design-rationale.md](knowledge/design-rationale.md#ディスク暗号化を入れない)）と、Terraform の drift 検出の自動化（[knowledge/terraform-provisioning.md](knowledge/terraform-provisioning.md#drift-の検出は自動化しない)）である。
@@ -602,7 +638,7 @@ Backup DNS はクラスターと無関係に建てられるので、順番を入
 - [ ] **UniFi Protect の録画先**：UCG-Fiber はストレージを持たないため、カメラ2台の録画先が存在しない。UNVR の追加、DS923+ の Surveillance Station、Kubernetes 上の NVR（Frigate 等）が候補になる。選択によって Camera VLAN のポリシーが変わる
 - [ ] **external-dns の Pi-hole プロバイダーが Pi-hole v6 で動くか**：未確認である。v6 は API が変わっており、`nebula-sync` を採ったのも v6 で Gravity Sync と Orbital Sync が動かなかったためで、同じ理由で引っかかる可能性がある。動かない場合は、内部 DNS を UniFi の Local DNS Records に寄せて external-dns の UniFi webhook から書く案（[knowledge/service-exposure.md](knowledge/service-exposure.md) で一度は退けたもの）の再検討になり、design.md の「内部の名前解決」の判断が変わる。着手はフェーズ1の Pi-hole 移設以降になるが、結論によって設計が変わるため早めに調べる価値がある
 - [ ] **cloudflared の egress を保つ手立て**：external Gateway に `HTTPRoute` を足すたびに、その backend を `kubernetes/apps/network/cloudflared/app/networkpolicy.yaml` へ足す必要がある（[knowledge/gateway-and-tunnel.md](knowledge/gateway-and-tunnel.md)）。足し忘れの症状は `403 Access denied` である。`.github/workflows/validate.yaml` が external に繋がった `HTTPRoute` の backend と egress の許可を並べて出すところまでは入れた。機械的な突き合わせは Service から Pod ラベルを解決する必要があり、静的には決まらない。サービスが増えてきたら、`kubectl` を使う検査を別に用意するか、規約で運用するかを決める
-- [ ] **失敗を知らせる経路**：いま Flux の `Alert` も `Provider` も0件で、`Kustomization` や `HelmRelease` が落ちても気付く手立てがクラスターを見に行くことしかない。`homelab/expose` ラベルの付け忘れのように「壊れずに黙って効かない」種類の失敗は特に拾えない。notification-controller は既に動いているので、`Provider` 1本と `Alert` 1本で済む。kube-prometheus-stack を待つ必要はない
+- [ ] **失敗を知らせる経路**：いま Flux の `Alert` も `Provider` も0件で、`Kustomization` や `HelmRelease` が落ちても気付く手立てがクラスターを見に行くことしかない。R9 の merge 直後に起きた公開 DNS の消失のように、**クラスター側が全部 `True` のまま外形だけが落ちる**種類の失敗は特に拾えない。notification-controller は既に動いているので、`Provider` 1本と `Alert` 1本で済む。kube-prometheus-stack を待つ必要はない
 - [ ] **監視**：kube-prometheus-stack。あわせて Hubble のメトリクスとフローの保存も設計する。いまは cilium agent のリングバッファ 4095 件だけで、Pod が入れ替わると消える。R7 では 7844 の drop と backend の 403 をどちらも Hubble の verdict で決着させており、推測に頼らず切り分けられる価値は確認できている。**入れるときは cloudflared の `CiliumNetworkPolicy` の ingress にスクレイパを足す。** 足し忘れると `:2000` へのスクレイプが黙って落ちる。未着手
 - [ ] **バックアップ**：Git リポジトリ + DS923+ のスナップショット。未着手
 - [ ] **MS-03 の NPU**：`intel_vpu` の probe が `-EIO` で失敗する。使う段になったらカーネルの更新か BIOS 設定を確認する
