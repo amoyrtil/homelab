@@ -32,6 +32,16 @@ variable "pihole_address" {
   default     = null
 }
 
+variable "default_vlan_admin_address" {
+  description = <<-EOT
+    VLAN 1 に居るあいだの作業端末のアドレス。
+    入れると暫定の許可がこの1台だけに絞られる。DHCP 予約を切っておくこと。
+    null のあいだは VLAN 1 全体が送信元になる。
+  EOT
+  type        = string
+  default     = null
+}
+
 variable "keep_default_vlan_access" {
   description = <<-EOT
     VLAN 1（Default）から Server / Service / Management への暫定の許可を

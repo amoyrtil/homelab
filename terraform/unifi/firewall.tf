@@ -124,8 +124,18 @@ locals {
   # Internal から新規ゾーンへの組にはポリシーが無いため既定拒否になる。
   # これが無いと作業端末から kubectl も talosctl も LB IP も届かない。
   #
+  # **送信元は作業端末1台に絞れる。**
+  # VLAN 1 は UniFi の既定 VLAN であり、プロファイルを当てていないポートに
+  # 挿した機器やタグ無しで喋る機器がそこへ落ちる。ゾーン全体を許すと、
+  # そうした機器から apid(50000)、kube-apiserver(6443)、etcd、kubelet(10250)
+  # が見える。どれも mTLS か 401 で守られているが、許可の幅が意図より広い。
+  # var.default_vlan_admin_address に作業端末のアドレスを入れると、そこだけに
+  # 絞る。DHCP 予約を1つ切る手間と引き換えである。
+  #
   # 作業端末を VLAN 30 へ、UCG-Fiber の管理アドレスを VLAN 10 へ移したら
   # var.keep_default_vlan_access を false にして消す。
+  transitional_src_ips = var.default_vlan_admin_address == null ? null : [var.default_vlan_admin_address]
+
   transitional_policies = var.keep_default_vlan_access ? {
     internal-server     = { name = "TEMP Allow Default VLAN to Server", src = "internal", dst = "server", dst_ips = null, port = null, protocol = "all", respond = true }
     internal-service    = { name = "TEMP Allow Default VLAN to Service", src = "internal", dst = "service", dst_ips = null, port = null, protocol = "all", respond = true }
@@ -151,9 +161,12 @@ resource "unifi_firewall_policy" "allow" {
   # 逆向きのポリシーを書く代わりに、応答を自動で通す。
   create_allow_respond = each.value.respond
 
+  # 送信元を絞るのは暫定ポリシーだけである。
+  # 残りはゾーン全体を送信元とする（design.md のポリシー表がそう定めている）。
   source = {
     zone_id         = local.zone_ids[each.value.src]
-    matching_target = "ANY"
+    matching_target = each.value.src == "internal" && local.transitional_src_ips != null ? "IP" : "ANY"
+    ips             = each.value.src == "internal" ? local.transitional_src_ips : null
   }
 
   destination = {
