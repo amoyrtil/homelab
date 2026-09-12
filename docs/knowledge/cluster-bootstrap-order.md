@@ -86,11 +86,20 @@ kubectl apply -f bootstrap/cilium-bgp.yaml        # BGP の3リソース
 
 ```bash
 kubectl create namespace flux-system
+kubectl label namespace flux-system homelab/expose=true
 helm install flux-operator oci://ghcr.io/controlplaneio-fluxcd/charts/flux-operator \
   --version 0.59.0 -n flux-system --wait
 ```
 
 values は既定のままでよい。
+
+**`homelab/expose=true` のラベルが要る。**
+external Gateway の `allowedRoutes` が `Selector` になっており、このラベルを持つ namespace からの `HTTPRoute` しか受け付けない。
+付けないと Webhook Receiver の `HTTPRoute` が external に繋がらず、GitHub の push が届かなくなる。
+症状は「壊れない」ことである。Flux は `FluxInstance` の間隔（1時間）で同期し続けるため、反映が遅いことにしか気付けない。
+
+ラベルを namespace に手で付けるのは、`flux-system` が flux-operator の管理下にあるためである。
+Flux のマニフェストから同じ namespace を宣言すると、`prune` でこの namespace を消しに行く経路ができる。
 
 ## 7. age の秘密鍵をクラスターに入れる
 

@@ -31,6 +31,38 @@ external に繋がなければ公開 DNS にレコードが作られず、イン
 
 アノテーションで公開を制御する方法もあるが、`parentRefs` なら `HTTPRoute` 単体を読んで公開の有無が判断できる。
 
+### スイッチを2つにする
+
+R9 の監査で、`parentRefs` だけだと**どの namespace からでも1行足すだけで公開側に繋がる**ことを指摘した。
+external Gateway の `allowedRoutes` が `from: All` だったためである。
+
+実際の到達は塞げている。
+cloudflared の egress が backend を列挙する形になっており、許可の無い backend は `403` になる（後述）。
+塞げていないのは**名前の公開**である。
+external-dns は Gateway に繋がった時点でレコードを書くため、届かないサービスでも FQDN が公開 DNS に出る。
+
+namespace 側にも許可を要求する形にした。
+
+```yaml
+allowedRoutes:
+  namespaces:
+    from: Selector
+    selector:
+      matchLabels:
+        homelab/expose: "true"
+```
+
+internal は `All` のままでよい。
+宅内からの到達は塞ぐ対象ではなく、`HTTPRoute` を書いたなら繋がってよい。
+
+**`flux-system` にはラベルを手で付ける。**
+この namespace は flux-operator の管理下にあり、Flux のマニフェストから同じ namespace を宣言すると `prune` で消しに行く経路ができる。
+bootstrap の手順に入れてある（[cluster-bootstrap-order.md](cluster-bootstrap-order.md)）。
+
+付け忘れの症状は「壊れない」ことである。
+Webhook Receiver が external に繋がらず、GitHub の push が届かなくなるが、Flux は1時間の間隔で同期し続ける。
+反映が遅いことにしか気付けない。
+
 listener の構成は2本で違う。
 internal は宅内からの経路であり、Cloudflare を通らないため Gateway 自身が TLS を終端する。
 external は Cloudflare Edge が TLS を終端するため、listener は HTTP だけでよい。
@@ -248,6 +280,58 @@ home-operations 系のリポジトリに cloudflared の egress ポリシーの�
 `toFQDNs` で `*.argotunnel.com` に絞る例もある。
 採らなかったのは、クラスターの唯一の入口の可用性を Cilium の DNS proxy に依存させることになるためである。
 加えて cloudflared は既定リゾルバが失敗すると `1.1.1.1:853` へ直接 DoT で SRV を引き、この経路は DNS proxy を通らないため IP が学習されず、結果として 7844 が拒否される。
+
+## ゾーン設定を引き上げる
+
+R8 は現在値のままコード化し、`ssl = flexible` と `min_tls_version = 1.0` の判断を R9 へ送った。
+R9（2026年9月11日）で両方を引き上げた。
+
+| 設定 | 前 | 後 |
+| --- | --- | --- |
+| `ssl` | `flexible` | `strict` |
+| `min_tls_version` | `1.0` | `1.2` |
+
+### Tunnel を使うと SSL モードは実質バイパスされる
+
+ゾーンの SSL/TLS モードが決めるのは、Cloudflare Edge からオリジンまでの1ホップである。
+Tunnel の場合、そのホップは cloudflared への QUIC 接続であり、モードに関わらず常に暗号化されている。
+`cloudflared` が宅内のサービスへ何で繋ぐかは ingress ルールの `service:` が決める。
+
+つまり **`http://cilium-gateway-external…:80` を向いたまま `strict` にしても壊れない**。
+実際に壊れないことを apply の前後で確かめた。
+
+| 確認項目 | 結果 |
+| --- | --- |
+| `apply` | `0 added, 2 changed, 0 destroyed` |
+| 直後の `plan` | `No changes` |
+| 公開 URL（連続3回） | `HTTP 404`。apply 前と同じ応答 |
+| TLS 1.1 で接続 | `HTTP 000`。拒否される |
+| TLS 1.2 で接続 | `HTTP 404`。通る |
+
+### では何のために上げるのか
+
+バイパスされるなら `flexible` のままでもよさそうに見える。
+上げる理由は、**これがゾーン全体に効く設定だから**である。
+
+| `flexible` のまま残す危険 | 内容 |
+| --- | --- |
+| 将来の非 Tunnel オリジン | Tunnel を通さない proxied レコードを1本足した瞬間、Cloudflare が平文で origin へ繋ぐ |
+| Authenticated Origin Pull | `Off` と `Flexible` では使えない |
+| ポートによる挙動の変化 | `flexible` は 443 以外の HTTPS で `full` にフォールバックする |
+
+Cloudflare 自身もこう書いている。
+
+> If possible, Cloudflare strongly recommends using **Full** or **Full (strict)** modes to prevent malicious connections to your origin.
+> If your application contains sensitive information (personalized data, user login), use **Full** or **Full (Strict)** modes instead.
+> ([Cloudflare: Encryption modes](https://developers.cloudflare.com/ssl/origin-configuration/ssl-modes/))
+
+`full` ではなく `strict` を選んだのは、Tunnel をやめて直接公開へ戻す日が来たときに、
+オリジン証明書の検証が最初から要求される状態にしておくためである。
+いま得ているものは何も無いが、失うものも無い。
+
+`min_tls_version` は 1.2 にした。
+このゾーンが serve するのは Tunnel 経由の自分のサービスだけで、古い機器がここを引くことはない。
+互換性を気にする相手が居ない。
 
 ## 未回収
 

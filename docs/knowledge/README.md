@@ -19,6 +19,7 @@ homelab の構築過程で行った検証と、そこで得た知見の置き場
 | [flux-bootstrap.md](flux-bootstrap.md) | R6 の記録。Flux Operator を入れ、Longhorn を GitOps へ移し、SOPS で暗号化した Secret を Flux に復号させるまで。手で入れる鍵をどこで切るか | 2026年9月9日 |
 | [terraform-provisioning.md](terraform-provisioning.md) | R8 の着手前に調べた provider の実力。UniFi と Cloudflare の provider が Zone-Based Firewall と Tunnel をどこまで扱えるか、手で作った既存リソースを import で回収できるか。Terraform と Flux と external-dns の所有権の境界もここで決めた | 2026年9月9日 |
 | [gateway-and-tunnel.md](gateway-and-tunnel.md) | R7 の記録。cert-manager で証明書を取り、Gateway を internal と external の2本に分け、Cloudflare Tunnel と external-dns を通して同じ URL を宅内とインターネットの両方から届かせるまで | 2026年9月9日 |
+| [cilium-routing-mode.md](cilium-routing-mode.md) | R9 の監査で見つかった、routing mode の決定が存在しないまま既定の VXLAN で動いていた件。native に切り替えて MTU とレイテンシとスループットを測り、切り替えのコストも測った | 2026年9月11日 |
 
 ## 横断的な知見
 
@@ -40,15 +41,20 @@ homelab の構築過程で行った検証と、そこで得た知見の置き場
 - **同じ URL で LAN 内とインターネットの両方から届く。** external-dns 2系統による split-horizon DNS で成立する。ただし LAN 内のクライアントが DoH などで内部 DNS を迂回しないことが前提になる。
 - **UniFi の Zone-Based Firewall は宛先ネットワークでゾーンを決める。** BGP で学習した `/32` は、next-hop が別 VLAN にあっても、アドレスの属する VLAN のゾーンに入る。LB IP のアクセス制御を VLAN 120 のゾーンポリシーで書ける。
 - **`bgp listen range` は UniFi に通る。** UCG-Fiber 側にノード IP を列挙する必要はなく、ノードを増やしてもルーターの設定は変えずに済む。
+- **Cilium はカプセル化しない構成にできる。** ノードが全台 VLAN 20 の同一 L2 にいるため `routingMode: native` と `autoDirectNodeRoutes` が使える。既定の VXLAN では経路の実効 MTU が 1450 に落ちる。稼働中に変えるとデータプレーンが途切れるので、クラスターを組むときに入れる。
+- **`cilium-dbg status` の `(Direct Routing)` は routing mode ではない。** kube-proxy 置換のバックエンド到達方式であり、Pod ネットワークの routing mode は `Routing: Network:` にしか出ない。
 - **Cilium は values を変えても Pod を入れ替えない。** `rollOutCiliumPods` と `operator.rollOutPods` と `envoy.rollOutPods` を有効にしないと、`helm upgrade` が成功したまま設定が効かない。
 - **Longhorn は Talos の kubelet に `/var/lib/longhorn` の bind mount を要求する。** `rshared` で伝播させないと CSI のマウントが kubelet に見えない。適用にノードの再起動は要らない。
+- **Longhorn の SMB backupstore に Talos の拡張は要らない。** `mount.cifs` は `longhorn-manager` のイメージに入っており、`cifs` は Talos のカーネルが持つ。csi-driver-smb と同じ理屈である。
+- **CI は SOPS の鍵を持たずにマニフェストを検証できる。** `encrypted_regex` が値だけを暗号化するため `kustomize build` が通る。ただし `${SECRET_*}` の未置換と Secret の `sops` キーで偽陽性が出るので、置換と `-skip Secret` が要る。
 - **Longhorn をワーカーに限定するのに `nodeSelector` は要らない。** チャートの `taintToleration` が既定で空であり、コントロールプレーンの taint を許容しないためである。
 - **flux-operator は `FluxInstance` の名前によらず `flux-system` という名前で GitRepository を作る。** `sourceRef` はそちらを指す。
 - **Kubernetes の Secret は `encrypted_regex: ^(data|stringData)$` で暗号化する。** ファイル全体を暗号化すると `kind` まで隠れ、kustomize がリソースとして読めない。
 - **手でクラスターに入れる鍵は `sops-age` の1つだけ。** リポジトリが public のため Git 認証が要らない。private 化やオーガナイゼーション移行のときに2つ目が要る。
 - **クラスターを立てる順序は4箇所で入れ替えられない。** `cniConfig: none` は構築時にしか効かず、Gateway API の CRD は Cilium より先、Cilium は flux-operator より先、`sops-age` は `FluxInstance` より先である。
 - **UniFi の Terraform provider は `ubiquiti-community/unifi` に移っている。** `paultyng/unifi` は 2023年で更新が止まり、Zone-Based Firewall を扱えない。
-- **`unifi_firewall_policy` の順序は Terraform から管理できない。** `index` が read-only であり、ポリシーはゾーンペアの末尾に追加される。順序に依存しない設計にするか、UI で並べ替える。
+- **`unifi_firewall_policy` の順序は Terraform から管理できない。** `index` が read-only であり、ポリシーはゾーンペアの末尾に追加される。**それでも Terraform に載せられる。** 評価順が結果を変えるのは、1つのパケットに一致する複数のポリシーで動作が割れるときだけであり、許可だけの集合なら順序は意味を持たない。
+- **VLAN を切っただけでは分離されない。** 作った VLAN は順に既定の Internal ゾーンへ入り、Internal はゾーン内相互を許可する既定ポリシーを持つ。新規に作ったゾーンだけが既定で拒否になる。
 - **Tunnel の import では `tunnel_secret` を渡さない。** 渡すと in-place の更新が1件出て稼働中の Tunnel へ書き込みが走る。渡さなければ差分ゼロの純粋な import になり、state にも秘密が入らない。値はクラスターの `cloudflared-credentials` にある。
 - **Terraform の state はクラスター内に置けない。** クラスターの前提となるネットワークを Terraform が作るため循環依存になる。Cloudflare R2 に置く。
 - **Cloudflare のサービス用 DNS レコードは external-dns の所有物である。** Terraform が同じ名前を握ると互いに消し合う。Terraform が持つのは apex や MX のように external-dns が触らないものだけ。
