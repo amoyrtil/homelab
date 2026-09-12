@@ -10,8 +10,8 @@ homelab に Kubernetes クラスターと GitOps ベースの CI/CD を整備す
 
 ## 現在地
 
-**リハーサル（手順2）の R8 まで完了。残るは R9 だけである。**
-最終更新は 2026年9月10日である。
+**リハーサル（手順2）は R9 まで完了した。次は手順4と手順5である。**
+最終更新は 2026年9月12日である。
 
 ### いまのクラスターの状態
 
@@ -23,7 +23,7 @@ homelab に Kubernetes クラスターと GitOps ベースの CI/CD を整備す
 | worker-1 | MS-03 | 192.168.20.41 | ワーカー |
 | VIP | — | 192.168.20.100 | Kubernetes API エンドポイント |
 
-入っているものは Talos v1.14.0、Kubernetes v1.37.0、Cilium v1.20.1（kube-proxy 置換、L7 proxy、Gateway API、BGP Control Plane）である。
+入っているものは Talos v1.14.0、Kubernetes v1.37.0、Cilium v1.20.1（kube-proxy 置換、L7 proxy、Gateway API、BGP Control Plane、native routing）である。
 `allowSchedulingOnControlPlanes` は `false` にしてある。
 `GatewayClass`、`CiliumLoadBalancerIPPool`（`192.168.120.100-250`）、BGP の3リソースが載っている。
 `CiliumL2AnnouncementPolicy` は R4 で削除した。
@@ -35,8 +35,27 @@ cert-manager 1.21.1 が `cert-manager` に入り、Let's Encrypt の ClusterIssu
 Flux の `Receiver` が `flux-system` にあり、GitHub の push をトンネル経由で受ける。
 検証に使ったリソースは削除済みで、`default` namespace は空である。
 
-**手でクラスターに入れたものは4つある。**
-Cilium の Helm リリース、flux-operator の Helm リリース、`sops-age` Secret、`FluxInstance` である。
+**手でクラスターに入れたものは8つある。**
+
+| 対象 | Flux の管理下か |
+| --- | --- |
+| Gateway API の CRD 9本 | 外。Cilium より先に要るため |
+| Cilium の Helm リリース | 外。CNI が無いと Flux が動かない |
+| `CiliumLoadBalancerIPPool`（`bootstrap/cilium-networks.yaml`） | 外。**Flux に移せる**（下記） |
+| BGP の3リソース（`bootstrap/cilium-bgp.yaml`） | 外。**Flux に移せる**（下記） |
+| `flux-system` namespace | 外 |
+| flux-operator の Helm リリース | 外。Flux 自身 |
+| `sops-age` Secret | 外。secret zero |
+| `FluxInstance` | 外。Flux 自身 |
+
+加えて `flux-system` に `homelab/expose=true` のラベルを付ける。
+external Gateway の `allowedRoutes` が `Selector` になったため要る（R9）。
+この namespace は flux-operator の管理下にあり、Flux のマニフェストから宣言すると `prune` で消しに行く経路ができるため、手で付ける。
+
+**LB プールと BGP の4リソースは Flux に移せる。**
+Cilium が動いたあとの通常の CR であり、Flux が Git を pull するのに LoadBalancer IP は要らない。
+[design.md の所有権表](design.md#リソースの所有権)は「クラスター内のリソース = Flux」としており、この4本はその行と食い違っている。
+移すかどうかはフェーズ1で決める。
 `FluxInstance` は Flux 自身の構成であり、Flux で管理できないため `bootstrap/flux-instance.yaml` を手で適用する。
 残りは Flux が Git から反映する。
 クラスターを作り直すときの順序は [knowledge/cluster-bootstrap-order.md](knowledge/cluster-bootstrap-order.md) にまとめてある。
@@ -64,24 +83,42 @@ S100-WLP は3台のうち2台の内蔵 I226-V に物理層障害があり、そ�
 
 BGP も Terraform の state に入っている（UniFi 上の名前は `Blackwall-BGP`）。
 worker-1 とのピアが確立しており、FRR 設定は `terraform/unifi/ucg-fiber-bgp.conf` にある。
-Zone-Based Firewall のゾーンとポリシーは入れていない。
-これとスイッチのポートプロファイルは、そもそも Terraform に載せない方針とした（[design.md の「リソースの所有権」](design.md#リソースの所有権)）。
+**Zone-Based Firewall はまだ投入していない。**
+VLAN 60（Guest）を除く6つが UniFi 既定の Internal ゾーンに入っており、ゾーン内は相互に到達する。
+つまり [design.md の VLAN 間ポリシー](design.md#vlan-間ポリシー)は1行も効いていない。
+R9 で見つけた最大の穴であり、コードは `terraform/unifi/firewall.tf` に書いた。
+投入はフェーズ1の最初に置いてある（「[構築の作業](#構築の作業)」）。
 
-**設計と現状の差分が3つ残っている。**
-R8 はコード化であって設定の変更ではないため、現在値のまま取り込み、判断は R9 に送った。
+スイッチのポートプロファイルは Terraform に載せない（[design.md の「リソースの所有権」](design.md#リソースの所有権)）。
 
-| 項目 | 設計の記述 | 現在値 |
+**設計と現状の差分3件は R9 で判定した。**
+design.md 側を直したものと、UniFi 側を直すものに分かれる。
+
+| 項目 | 判定 | 状態 |
 | --- | --- | --- |
-| DHCP プール | VLAN 20 のみ `.150-.250` と規定 | VLAN 20 以外は UniFi 既定の `.6-.254` |
-| mDNS | VLAN 30 と 40 で有効化する | 全 VLAN で有効 |
-| DHCP Guarding | VLAN 30 と 60 に価値がある | VLAN 20 のみ有効 |
+| DHCP プール | 設計を現状へ寄せる。VLAN 20 以外に予約帯を空ける理由がない | design.md 改訂済み |
+| mDNS | 現状を設計へ寄せる。VLAN 30 と 40 だけに絞る | フェーズ1の作業項目 |
+| DHCP Guarding | VLAN 20・30・60 の3つにする | `networks.tf` 改訂済み。apply はフェーズ1 |
 
 ### 次にやること
 
-**R9 に入る。リハーサルで残っているのはこれだけである。**
+**リハーサルは終わった。次は手順4（規約の整備）と手順5（フェーズ1の構築）である。**
 
-R9 は検証ではなく監査であり、やり方は「[R9 の進め方](#r9-の進め方)」節にある。
-手順5（フェーズ1の構築）の前に置く。
+手順5に入る前に、R9 が立てた作業がある。
+オーガナイゼーションへの移管と private 化、Zone-Based Firewall の投入、ネットワークの移行の3つで、どれもクラスターを組む前に済ませる。
+並びは「[構築の作業](#構築の作業)」にある。
+
+**R9 は完了した（2026年9月12日）。**
+
+7つの対象を実装とクラスターの実測に突き合わせ、36件を挙げた。
+重大が3件、要対応が15件である。
+**設計の骨格に手を入れる必要はなく、穴は「決めたが、やっていない」ところに集中していた。**
+
+覆した判断が2つある。
+Zone-Based Firewall を Terraform に載せることにしたのと、Cilium の routing mode を native にしたことである。
+どちらも記録は [knowledge/](knowledge/) にある。
+
+結果は「[R9 の結果](#r9-の結果)」にある。
 
 **R8 は完了した（2026年9月10日）。**
 
@@ -91,10 +128,11 @@ R9 は検証ではなく監査であり、やり方は「[R9 の進め方](#r9-�
 呼び出しは `mise run terraform <root モジュール> <コマンド>` である。
 判断の記録は [knowledge/terraform-provisioning.md](knowledge/terraform-provisioning.md) にある。
 
-ポートプロファイルと Zone-Based Firewall は載せない方針とした（[design.md の「リソースの所有権」](design.md#リソースの所有権)）。
+ポートプロファイルと Zone-Based Firewall は載せない方針としたが、**後者は R9 で覆した**（[knowledge/terraform-provisioning.md](knowledge/terraform-provisioning.md#評価順は動作が割れるときにしか意味を持たない)）。
 
-R8 が R9 に送った項目が2つある。
-公開とセキュリティ（視点4）に Cloudflare の `ssl = flexible` と `min_tls_version = 1.0`、ネットワーク設計（視点1）に DHCP プール、mDNS、DHCP Guarding の現在値である。
+R8 が R9 に送った2項目は、どちらも決着した。
+Cloudflare の `ssl` は `strict`、`min_tls_version` は `1.2` に引き上げて apply 済みである。
+DHCP プール、mDNS、DHCP Guarding は「[いまのネットワークの状態](#いまのネットワークの状態)」の表にある。
 
 cloudflared の egress を絞る `CiliumNetworkPolicy` は R7 のあとに入れた。
 Gateway 宛の通信は L4 では止まらないが、Envoy が upstream を選んだ時点で backend に対して評価されるため、**公開する `HTTPRoute` の backend を列挙すれば塞げる**。
@@ -108,8 +146,8 @@ external-dns の Pi-hole 系統はリハーサルでは扱わない。
 ### 作業の進め方
 
 - [x] **1. テンプレートの評価** — `onedr0p/cluster-template` を採用するか判断する。記録は [knowledge/cluster-template-evaluation.md](knowledge/cluster-template-evaluation.md)
-- [ ] **2. リハーサル** — いま動いているクラスターで、フェーズ1の構成を通す。R1 から R8 まで完了。R9 が残る。詳細は「[リハーサル](#リハーサル)」節
-- [ ] **3. 知見の集約** — 2 の結果を `knowledge/` に記録する。R1 から R8 の分は [knowledge/](knowledge/) に反映済み
+- [x] **2. リハーサル** — いま動いているクラスターで、フェーズ1の構成を通す。R1 から R9 まで完了。詳細は「[リハーサル](#リハーサル)」節
+- [x] **3. 知見の集約** — 2 の結果を `knowledge/` に記録する。R1 から R9 の分を [knowledge/](knowledge/) に反映した
 - [ ] **4. 規約の整備** — 命名規則など homelab 全体のルールを決め、プロジェクトルートの `CLAUDE.md` を更新する
 - [ ] **5. フェーズ1の構築** — EliteDesk 到着後、クラスターを本番として組み直す。UniFi と Cloudflare は R8 で書いた Terraform の構成をそのまま使う
 
@@ -151,7 +189,7 @@ R1 から R4 までで踏んだ落とし穴は、**いずれも Cilium 側にあ
 - [x] **R6: Flux Operator と SOPS**（2026年9月9日 完了）
 - [x] **R7: cert-manager、Cloudflare Tunnel、external-dns**（2026年9月9日 完了）
 - [x] **R8: UniFi と Cloudflare を Terraform に移す**（2026年9月10日 完了）
-- [ ] **R9: アーキテクチャと実装の監査**（複数の視点でレビューする。詳細は「[R9 の進め方](#r9-の進め方)」節）
+- [x] **R9: アーキテクチャと実装の監査**（2026年9月12日 完了）
 
 R1 から R3 が山場である。
 ここが通れば残りは積み上げになる。
@@ -219,7 +257,7 @@ R1 から R6 で確定した設定値は [design.md の「Talos と Cilium の�
 | 確認項目 | 結果 |
 | --- | --- |
 | Node の状態 | 両ノードとも `Ready` |
-| `KubeProxyReplacement` | `True`（Direct Routing） |
+| `KubeProxyReplacement` | `True` |
 | Cilium の健全性 | `Modules Health: OK(75)`、`Controller Status: 13/13 healthy` |
 | cilium-envoy | 両ノードで Running（`l7Proxy` が効いている） |
 | ClusterIP 経由の疎通 | `HTTP 200` |
@@ -371,6 +409,68 @@ Gateway が `503` を返す。`from` を書かない NetworkPolicy を1つ足し
 
 詳細は [knowledge/gateway-and-tunnel.md](knowledge/gateway-and-tunnel.md) にある。
 
+### R9 の結果
+
+**2026年9月12日。36件（重大3、要対応15、検討8、記録のみ10）。**
+
+7つの対象すべてを、実装とクラスターの実測に突き合わせた。
+判断の根拠が実測に紐づいているものは、ひとつも覆らなかった。
+VLAN の番号体系、LB Pool を VLAN 120 に切る判断、公開のスイッチを `parentRefs` に持たせる形、Terraform に載せる基準、`.mise/tasks/terraform` による名前の閉じ込めは、そのまま維持する。
+
+**穴は「決めたが、やっていない」ところに集中していた。**
+
+| 重大 | 内容 |
+| --- | --- |
+| ZBF が1本も入っていない | 「Terraform に載せない」と決めた時点で、投入がどの作業リストからも落ちていた。VLAN は7つとも既定の Internal ゾーンにおり、相互に到達する |
+| 宣言した CI が無い | design.md が「マニフェストの検証と Renovate」を宣言していたが、`.github/workflows/` は自動承認1本だけだった。CodeQL の default setup は動いていたが、対象は Actions のワークフローだけで、マニフェストも Terraform も見ていない |
+| 公開リポジトリに CA 秘密鍵 | `talsecret.sops.yaml` が cluster CA と etcd CA を持ち、recipient は age 鍵1本だった |
+
+**覆した判断が2つある。**
+
+**Zone-Based Firewall を Terraform に載せる。**
+R8 は `unifi_firewall_policy` の `index` が read-only であることを理由に外した。
+覆したのは「評価順に意味がある」という前提のほうである。
+評価順が結果を変えるのは、1つのパケットに一致する複数のポリシーで動作が割れるときだけであり、許可だけの集合なら順序は意味を持たない。
+新規に作ったゾーンは既定で拒否になるため、拒否は「ポリシーを書かないこと」で表せる。
+design.md の表は許可20本・拒否0本に落ちた（DNS の宛先が決まるまでは12本）。
+
+**Cilium の routing mode を native にする。**
+routing mode の決定がどこにも無く、既定の VXLAN で動いていた。
+リハーサル環境で切り替えて測った。
+
+| 確認項目 | vxlan | native |
+| --- | --- | --- |
+| 経路の実効 MTU | 1450 | **1500** |
+| 断片化しない最大ペイロード | 1422 B | **1472 B** |
+| Pod 間 RTT 平均（50回） | 0.673 ms | 0.642 ms |
+| スループット | 91.8 Mbps | 95.0 Mbps（評価できない。下記） |
+| BGP、Gateway、Longhorn、Flux | — | すべて維持 |
+
+**スループットは測れなかった。**
+cp-1 の USB NIC が 100 Mbit リンクであり、カプセル化の有無に関わらずそこが上限になる。
+10GbE 同士で測り直す価値がある。
+
+切り替えのコストも測れた。
+ロールアウト中に 20回中2回の ping ロスと BGP セッションの張り直しが起きている。
+**稼働後に変えると必ず途切れる。**
+
+**この監査で実際に変えたもの。**
+
+| 対象 | 内容 |
+| --- | --- |
+| Cloudflare のゾーン設定 | `ssl` を `flexible` から `strict`、`min_tls_version` を `1.0` から `1.2` へ。apply 済み |
+| Cilium | `routingMode: native`、`autoDirectNodeRoutes`、`ipv4NativeRoutingCIDR`。クラスターに適用済み |
+| SOPS | バックアップ用の age 鍵を2本目の recipient として7ファイルに追加 |
+| external Gateway | `allowedRoutes` を `Selector` にし、`homelab/expose: "true"` を要求。**merge 後に有効になる**。ラベルは付与済み |
+| CI | `.github/workflows/validate.yaml` と `.github/renovate.json5` を新設 |
+| `terraform/unifi/firewall.tf` | ZBF のゾーン6つとポリシーを新設。apply はフェーズ1 |
+
+記録は [knowledge/cilium-routing-mode.md](knowledge/cilium-routing-mode.md)、[knowledge/terraform-provisioning.md](knowledge/terraform-provisioning.md)、[knowledge/gateway-and-tunnel.md](knowledge/gateway-and-tunnel.md)、[knowledge/flux-bootstrap.md](knowledge/flux-bootstrap.md)、[knowledge/longhorn-on-talos.md](knowledge/longhorn-on-talos.md) にある。
+
+**入れないことを決めたものもある。**
+Talos のディスク暗号化（[knowledge/design-rationale.md](knowledge/design-rationale.md#ディスク暗号化を入れない)）と、Terraform の drift 検出の自動化（[knowledge/terraform-provisioning.md](knowledge/terraform-provisioning.md#drift-の検出は自動化しない)）である。
+やらないと決めることと、決めずに放置することは違う。
+
 ## 構築の作業
 
 台数の推移とフェーズごとの設計は [design.md の「構築のフェーズ」](design.md#構築のフェーズ)にある。
@@ -381,13 +481,76 @@ Gateway が `503` を返す。`from` を書かない NetworkPolicy を1つ足し
 UCG-Fiber 側の VLAN 120 と BGP はリハーサルで投入済みであり、クラスターを組み直しても残る（「[いまのネットワークの状態](#いまのネットワークの状態)」）。
 本番は最初から BGP 構成で組める。
 
+**ネットワークの分離を先に済ませる。**
+いま VLAN 間のポリシーが1本も効いていない（R9 の N1）。
+クラスターを組む前に入れておけば、到達しないときに原因がクラスターかルーターかを迷わずに済む。
+
+- [x] `terraform/unifi/firewall.tf` にゾーン6つとポリシーを書く（[design.md の VLAN 間ポリシー](design.md#vlan-間ポリシー)）
+- [ ] 暫定の Internal → Server / Service / Management を含めて apply する
+- [ ] ネットワークをゾーンへ移し、作業端末から `kubectl` と LB IP への到達を確認する
+- [ ] 作業端末を VLAN 30 へ移す
+- [ ] UCG-Fiber の管理アドレスを VLAN 10 へ移し、`terraform/unifi/variables.tf` の `unifi_api_url` を `192.168.10.1` にする
+- [ ] 暫定の Internal → Server / Service / Management を削除する
+- [ ] VLAN 30 / 40 / 60 向けの SSID を作り、既存の `Kaeritei Wi-Fi Temporary`（VLAN なし）を畳む
+- [ ] mDNS リフレクタを VLAN 30 と 40 だけに絞る
+- [ ] DHCP Guarding を VLAN 30 と 60 にも入れる
+
+**オーガナイゼーションへの移管と private 化は、クラスターを組む前に済ませる。**
+先に移すと、Deploy key と `sync.pullSecret` の手順を組み直しと同じ回で1度だけ通せる。
+新しい `talsecret` も最初から private なリポジトリに入る。
+逆順にすると、組み直した直後にもう一度 `FluxInstance` を触って鍵を1つ足すことになる。
+
+- [ ] リポジトリをオーガナイゼーションへ移し、private にする
+- [ ] Deploy key を read-only で登録し、`bootstrap/flux-instance.yaml` に `sync.url` と `sync.pullSecret` を書く
+- [ ] GitHub の webhook を移動先で作り直す
+- [ ] `.github/workflows/approve-pr-from-owner.yaml` の判定を org のオーナー名に合わせる（**直さないとマージができなくなる**。下の注記を読むこと）
+- [ ] `.github/CODEOWNERS` を org のチームに変える
+- [ ] `terraform/*/variables.tf` と `.mise/tasks/terraform` の「リポジトリが public であるため」という理由を書き換える（値を Git に置かない判断そのものは維持する）
+- [ ] `age.agekey` のバックアップ鍵をオフラインへ移し、作業マシンから消す
+
+**`main` のブランチ保護（2026年9月12日時点）**
+
+| 設定 | 値 |
+| --- | --- |
+| `required_status_checks` | `Kubernetes マニフェスト`、`Terraform`（`strict: false`） |
+| `required_approving_review_count` | 1 |
+| `dismiss_stale_reviews` | true |
+| `require_code_owner_reviews` | true |
+| `require_last_push_approval` | true |
+| `enforce_admins` | true |
+| `allow_force_pushes` | false |
+| `required_conversation_resolution` | true |
+
+**自動承認は消せない。**
+承認1件が必須で、`dismiss_stale_reviews` と `enforce_admins` が立っている。
+push のたびに承認が落ち、ワークフローが `synchronize` で付け直している。
+つまりこれは**1人でこのリポジトリをマージ可能に保っている装置**であり、飾りではない。
+
+org へ移すと `github.repository_owner` が org 名になり、PR 作成者の login と一致しなくなる。
+**その瞬間にマージが一切できなくなる。** force push も禁止されており、逃げ道がない。
+
+R9 の監査でここを「何も守っていない」と書いたが、誤りだった。
+GitHub の設定を実際に引いて確認している。
+
+- [x] `validate.yaml` の2ジョブを `main` の必須ステータスチェックにする
+
+**ここから先がクラスターである。**
+
 - [ ] EliteDesk 800 G6 を1台、`cp-1` として構築する
+- [ ] `talsecret` を作り直し、API トークン類を Roll する（[knowledge/flux-bootstrap.md](knowledge/flux-bootstrap.md#公開したものは-private-化しても取り消せない)）
 - [ ] MS-03 を `worker-1` として再投入する
 - [ ] 「フェーズ1で入れるコンポーネント」を一式入れる
+- [ ] `metrics-server` と `csi-driver-smb` を入れる（リハーサルで扱っておらず、`kubernetes/apps/` に無い）
+- [ ] 公開する namespace に `homelab/expose: "true"` を付ける規約を運用に乗せる
+- [ ] DS923+ を VLAN 20 に載せ、Longhorn の backupstore 用の SMB 共有を作る
+- [ ] `cifs-secret` を SOPS で作り、Longhorn の `defaultBackupStore` を設定する（`longhorn/ks.yaml` に `decryption` を戻す必要がある）
+- [ ] `RecurringJob` を置き、復元を1回試す（取れているだけでは確かめたことにならない）
 - [ ] クラスター外に Backup DNS を構築する
 - [ ] Pi-hole をクラスター上へ移設する
 - [ ] Pi-hole と Backup DNS の同期機構（`nebula-sync`）を動かす
 - [ ] external-dns の Pi-hole 系統を有効にする
+- [ ] Untrusted / Camera / Guest / Management から Pi-hole と Backup DNS への 53 を許可する（[design.md の #10-17](design.md#ポリシー)）
+- [ ] UCG-Fiber で外向きの 53 をリダイレクトする（DoH エンドポイントの遮断は見送った。理由は [knowledge/service-exposure.md](knowledge/service-exposure.md)）
 
 **Pi-hole 周りの4項目は、この順に片付ける。**
 external-dns の Pi-hole 系統を動かすと、宅内の名前解決がクラスター上の Pi-hole に依存する。
@@ -423,6 +586,7 @@ Backup DNS はクラスターと無関係に建てられるので、順番を入
 | 項目 | 内容 | いつまでに |
 | --- | --- | --- |
 | 構築期間中の DNS の常用系 | 定常運用は Pi-hole を primary、Backup DNS を待機系とすることで決着した（[knowledge/service-exposure.md](knowledge/service-exposure.md)）。残るのは構築期間中の扱いで、クラスターの作り直しを繰り返すあいだ Backup DNS を常用系に据えるかを決める。いまの Pi-hole は S100-WLP 上のスタンドアロンで動いており、クラスターの作り直しの影響を受けない | フェーズ1で Pi-hole を移設する前 |
+| 公開サービスの認証方式 | Cloudflare Access と WAF は LAN 内から効かない。内部アクセスは Cloudflare を経由しないため、認証もレート制限も適用されない（[knowledge/service-exposure.md](knowledge/service-exposure.md)）。受け入れるか、内部にも別の認証を置くかを決める。design.md の所有権表は Access を Terraform の持ち物としているが、`terraform/cloudflare/` に実体は無い | サービスを1つでも公開する前 |
 | EliteDesk のストレージ種別 | NVMe か SATA か | 実機の到着後、ISO を焼く前 |
 | MS-03 の接続 NIC | X710 の SFP+ か RTL8127 の RJ-45 か。USW-Pro-XG-10-PoE の SFP28 ポートは2口しかなく、うち1口は UCG-Fiber への上流で埋まる | 本設置の配線時 |
 | 10GbE 配線の到達範囲 | トポロジ図で USW-Pro-XG-10-PoE のポート 5-10（DS923+、MS-03 x2、サーバーノード x3）が `GbE` と表記されている。同機は全 RJ45 ポートが 10GbE で、MS-03 は 10G SFP+ を2口持つ。機器側 NIC の制約を指しているのか記入漏れなのかを確定させる | 本設置の配線時 |
@@ -432,13 +596,15 @@ Backup DNS はクラスターと無関係に建てられるので、順番を入
 
 構築の本筋から外れるが、放置しないもの。
 
-- [ ] **リポジトリを移すときの更新箇所**：名前の変更、オーガナイゼーションへの移動、private 化のいずれでも、`FluxInstance` の `sync.url`、GitHub の webhook、自動承認のワークフロー、docs 内の URL に更新が要る。移動そのものでは壊れず、次の同期や次の push で黙って効かなくなる。一覧は [knowledge/flux-bootstrap.md](knowledge/flux-bootstrap.md) にある
+- [ ] **リポジトリを移すときの更新箇所**：名前の変更、オーガナイゼーションへの移動、private 化のいずれでも、`FluxInstance` の `sync.url`、GitHub の webhook、自動承認のワークフロー、`CODEOWNERS`、`terraform/*/variables.tf` の理由に更新が要る。移動そのものでは壊れず、次の同期や次の push で黙って効かなくなる。一覧は [knowledge/flux-bootstrap.md](knowledge/flux-bootstrap.md) にある
 - [ ] **スイッチポートの VLAN 割り当てを記録する**：どのポートを VLAN 20 にしたかの記録がなく、MS-03 の投入時に一度つまずいた
 - [ ] **10GbE で DS923+ との実効スループットを測る**：DS923+ を VLAN 20 に載せてから
 - [ ] **Pi-hole の冗長化**：クラスター内の Pi-hole を primary、Raspberry Pi 3 を replica として `nebula-sync` で設定を同期する。Pi-hole v6 では Gravity Sync も Orbital Sync も動かず、`nebula-sync` が現行の解になる。両方が v6 である必要がある。external-dns が書く Custom DNS のレコードは同期対象に含める。含めないと replica がクラスター上のサービス名を解決できず、待機系として機能しない（[knowledge/service-exposure.md](knowledge/service-exposure.md)）。あわせて DHCP で primary と secondary の両方を配る
 - [ ] **UniFi Protect の録画先**：UCG-Fiber はストレージを持たないため、カメラ2台の録画先が存在しない。UNVR の追加、DS923+ の Surveillance Station、Kubernetes 上の NVR（Frigate 等）が候補になる。選択によって Camera VLAN のポリシーが変わる
 - [ ] **external-dns の Pi-hole プロバイダーが Pi-hole v6 で動くか**：未確認である。v6 は API が変わっており、`nebula-sync` を採ったのも v6 で Gravity Sync と Orbital Sync が動かなかったためで、同じ理由で引っかかる可能性がある。動かない場合は、内部 DNS を UniFi の Local DNS Records に寄せて external-dns の UniFi webhook から書く案（[knowledge/service-exposure.md](knowledge/service-exposure.md) で一度は退けたもの）の再検討になり、design.md の「内部の名前解決」の判断が変わる。着手はフェーズ1の Pi-hole 移設以降になるが、結論によって設計が変わるため早めに調べる価値がある
-- [ ] **監視**：kube-prometheus-stack。あわせて Hubble のメトリクスとフローの保存も設計する。いまは cilium agent のリングバッファ 4095 件だけで、Pod が入れ替わると消える。R7 では 7844 の drop と backend の 403 をどちらも Hubble の verdict で決着させており、推測に頼らず切り分けられる価値は確認できている。未着手
+- [ ] **cloudflared の egress を保つ手立て**：external Gateway に `HTTPRoute` を足すたびに、その backend を `kubernetes/apps/network/cloudflared/app/networkpolicy.yaml` へ足す必要がある（[knowledge/gateway-and-tunnel.md](knowledge/gateway-and-tunnel.md)）。足し忘れの症状は `403 Access denied` である。`.github/workflows/validate.yaml` が external に繋がった `HTTPRoute` の backend と egress の許可を並べて出すところまでは入れた。機械的な突き合わせは Service から Pod ラベルを解決する必要があり、静的には決まらない。サービスが増えてきたら、`kubectl` を使う検査を別に用意するか、規約で運用するかを決める
+- [ ] **失敗を知らせる経路**：いま Flux の `Alert` も `Provider` も0件で、`Kustomization` や `HelmRelease` が落ちても気付く手立てがクラスターを見に行くことしかない。`homelab/expose` ラベルの付け忘れのように「壊れずに黙って効かない」種類の失敗は特に拾えない。notification-controller は既に動いているので、`Provider` 1本と `Alert` 1本で済む。kube-prometheus-stack を待つ必要はない
+- [ ] **監視**：kube-prometheus-stack。あわせて Hubble のメトリクスとフローの保存も設計する。いまは cilium agent のリングバッファ 4095 件だけで、Pod が入れ替わると消える。R7 では 7844 の drop と backend の 403 をどちらも Hubble の verdict で決着させており、推測に頼らず切り分けられる価値は確認できている。**入れるときは cloudflared の `CiliumNetworkPolicy` の ingress にスクレイパを足す。** 足し忘れると `:2000` へのスクレイプが黙って落ちる。未着手
 - [ ] **バックアップ**：Git リポジトリ + DS923+ のスナップショット。未着手
 - [ ] **MS-03 の NPU**：`intel_vpu` の probe が `-EIO` で失敗する。使う段になったらカーネルの更新か BIOS 設定を確認する
 - [ ] **Intel Quick Sync のパススルー**：Intel Device Plugin が `xe` と NPU のデバイスをどう公開するかを確認する。初期スコープ外

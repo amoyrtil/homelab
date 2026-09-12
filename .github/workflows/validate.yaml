@@ -1,0 +1,188 @@
+# マニフェストと Terraform の検証。
+#
+# design.md の CI/CD 方針にある「CI 側の仕事はマニフェストの検証と Renovate に
+# よる更新 PR に限る」の前半である。
+# クラスターには触らない。kubeconfig も渡さない。
+#
+# SOPS で暗号化した Secret はそのまま kustomize で読める。
+# .sops.yaml が encrypted_regex で data と stringData だけを暗号化しており、
+# apiVersion と kind と metadata は平文のまま残るためである。
+# 復号鍵を CI に置かずに検証できる。
+
+name: Validate
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  kubernetes:
+    name: Kubernetes マニフェスト
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # 追加されたファイルを base と比べるため、浅いクローンにしない。
+          fetch-depth: 0
+
+      - uses: jdx/mise-action@v3
+        with:
+          install_args: kustomize kubeconform
+
+      - name: kustomize build が通るか
+        run: |
+          set -euo pipefail
+          fail=0
+          while IFS= read -r dir; do
+            printf '%-60s ' "$dir"
+            if out=$(kustomize build "$dir" 2>&1); then
+              echo "OK ($(grep -c '^---' <<<"$out" || true) docs)"
+            else
+              echo "FAIL"; echo "$out" | sed 's/^/    /'; fail=1
+            fi
+          done < <(find kubernetes -name kustomization.yaml -exec dirname {} \; | sort)
+          exit $fail
+
+      - name: アプリが kubernetes/apps/kustomization.yaml に並んでいるか
+        # 足し忘れても kustomize build も kubeconform も通り、Flux の
+        # Kustomization も全部 True のまま、そのアプリだけがクラスターに
+        # 存在しない。「壊れない」種類の失敗なので、ここで拾う。
+        run: |
+          set -euo pipefail
+          fail=0
+          while IFS= read -r ks; do
+            rel="${ks#kubernetes/apps/}"
+            if ! grep -qF "  - ${rel}" kubernetes/apps/kustomization.yaml; then
+              echo "::error file=$ks::kubernetes/apps/kustomization.yaml に並んでいない。足さないとクラスターに入らない" >&2
+              fail=1
+            fi
+          done < <(find kubernetes/apps -mindepth 3 -name ks.yaml | sort)
+
+          # 逆向きも見る。消したのに列挙が残っていると Flux が取得に失敗する。
+          while IFS= read -r listed; do
+            [ -f "kubernetes/apps/${listed}" ] || {
+              echo "::error file=kubernetes/apps/kustomization.yaml::${listed} が存在しない" >&2
+              fail=1
+            }
+          done < <(grep -oE '^  - \S+' kubernetes/apps/kustomization.yaml | sed 's/^  - //')
+          exit $fail
+
+      - name: kubeconform でスキーマを検証する
+        # 置換前のマニフェストをそのまま流すと2種類の偽陽性が出る。
+        #
+        # 1. ${SECRET_DOMAIN} は Flux の postBuild が解決するため、この時点では
+        #    ホスト名のパターンに一致しない。ダミーに置き換えてから検証する。
+        # 2. SOPS で暗号化した Secret はトップレベルに sops キーを持ち、
+        #    -strict が additional properties として弾く。Secret だけ飛ばす。
+        #    中身は暗号化されており、どのみち値を検証できない。
+        #
+        # -strict は他の種類には効かせる。属性名の打ち間違いを拾うためである。
+        run: |
+          set -euo pipefail
+          fail=0
+          while IFS= read -r dir; do
+            printf '%-60s ' "$dir"
+            out=$(kustomize build "$dir" \
+              | sed -E 's/\$\{SECRET_DOMAIN\}/example\.com/g; s/\$\{SECRET_[A-Z0-9_]+\}/placeholder/g' \
+              | kubeconform \
+                  -strict \
+                  -ignore-missing-schemas \
+                  -skip Secret \
+                  -schema-location default \
+                  -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+                  -summary -output text 2>&1) || fail=1
+            echo "$out" | tail -1
+            [ "$fail" -eq 1 ] && echo "$out" | sed 's/^/    /'
+          done < <(find kubernetes -name kustomization.yaml -exec dirname {} \; | sort)
+          exit $fail
+
+      - name: 公開した HTTPRoute の backend が cloudflared の egress に載っているか
+        # cloudflared の egress ポリシーは、公開する HTTPRoute の backend を
+        # 列挙する形で書いてある（knowledge/gateway-and-tunnel.md）。
+        # external に足したのに egress へ足し忘れると 403 になる。
+        #
+        # backend の Service 名（webhook-receiver）と egress が使う Pod の
+        # ラベル（app: notification-controller）は別物であり、Service を
+        # 解決しないと突き合わせられない。静的には決まらない。
+        #
+        # 決まるのは「同じ PR で両方を触ったか」である。external に繋がる
+        # HTTPRoute が**追加**されたのに networkpolicy.yaml が変わっていない
+        # PR を落とす。既存ルートの編集では鳴らない。
+        run: |
+          set -euo pipefail
+
+          # parentRefs ブロックの中だけを見る。ブロックは次の同階層のキーで終わる。
+          attaches_external() {
+            awk '
+              match($0, /^[[:space:]]*parentRefs:[[:space:]]*$/) { ind = match($0, /[^ ]/); f = 1; next }
+              f && /^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*:/ && match($0, /[^ ]/) <= ind { f = 0 }
+              f && /name:[[:space:]]*external[[:space:]]*$/ { found = 1 }
+              END { exit !found }
+            ' "$1"
+          }
+
+          echo "external Gateway に繋がった HTTPRoute:"
+          external_routes=""
+          while IFS= read -r f; do
+            if attaches_external "$f"; then
+              external_routes="${external_routes}${f}"$'\n'
+              echo "  $f"
+              sed -n '/backendRefs:/,/^[^ ]/p' "$f" | grep -E 'name:|port:' | sed 's/^/    /'
+            fi
+          done < <(grep -rl 'kind: HTTPRoute' kubernetes/)
+          [ -n "$external_routes" ] || { echo "  ERROR: 1件も検出できなかった。検出のしかたが壊れている" >&2; exit 1; }
+
+          echo
+          echo "cloudflared の egress で許可している backend:"
+          sed -n '/egress:/,$p' kubernetes/apps/network/cloudflared/app/networkpolicy.yaml \
+            | grep -E 'io.kubernetes.pod.namespace|app:|port:' | sed 's/^/  /'
+
+          [ "${GITHUB_BASE_REF:-}" ] || exit 0
+
+          echo
+          added=$(git diff --name-only --diff-filter=A "origin/${GITHUB_BASE_REF}...HEAD" -- 'kubernetes/**' || true)
+          changed=$(git diff --name-only "origin/${GITHUB_BASE_REF}...HEAD" || true)
+          fail=0
+          for f in $added; do
+            grep -q 'kind: HTTPRoute' "$f" 2>/dev/null || continue
+            attaches_external "$f" || continue
+            if ! grep -qx 'kubernetes/apps/network/cloudflared/app/networkpolicy.yaml' <<<"$changed"; then
+              echo "::error file=$f::external に繋がる HTTPRoute を追加したが、cloudflared の egress を触っていない。backend を networkpolicy.yaml に足さないと 403 になる" >&2
+              fail=1
+            fi
+          done
+          exit $fail
+
+  terraform:
+    name: Terraform
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: jdx/mise-action@v3
+        with:
+          install_args: opentofu
+
+      - name: fmt
+        run: tofu fmt -check -recursive -diff terraform/
+
+      - name: init と validate
+        # backend は無効にする。R2 の資格情報を CI に置かないためである。
+        # provider のスキーマだけを取ってきて構文と型を見る。
+        run: |
+          set -euo pipefail
+          for dir in terraform/*/; do
+            [ -f "${dir}versions.tf" ] || continue
+            echo "=== ${dir} ==="
+            tofu -chdir="$dir" init -backend=false -input=false -no-color
+            tofu -chdir="$dir" validate -no-color
+          done

@@ -12,9 +12,13 @@
 Flux が動くには CNI が要り、Flux 自身は Flux で管理できない。
 この2つだけを外から入れ、そこから先は Git を正とする。
 
-手でクラスターに入れるものは3つある。
-Cilium の Helm リリース、flux-operator の Helm リリース、`sops-age` Secret である。
+手でクラスターに入れるものは8つある。
+Gateway API の CRD、Cilium の Helm リリース、LB プール、BGP の3リソース、`flux-system` namespace、flux-operator の Helm リリース、`sops-age` Secret、`FluxInstance` である。
 どれもクラスターを作り直すたびに再実行する。
+
+このうち **LB プールと BGP は Flux に移せる**。
+Cilium が動いたあとの通常の CR であり、Flux が Git を pull するのに LoadBalancer IP は要らない。
+移せないのは、CNI が無いと動かないもの（Gateway API の CRD、Cilium）と、Flux 自身（flux-operator、`FluxInstance`）と、secret zero（`sops-age`）である。
 
 ## 1. machine config を生成する
 
@@ -86,11 +90,20 @@ kubectl apply -f bootstrap/cilium-bgp.yaml        # BGP の3リソース
 
 ```bash
 kubectl create namespace flux-system
+kubectl label namespace flux-system homelab/expose=true
 helm install flux-operator oci://ghcr.io/controlplaneio-fluxcd/charts/flux-operator \
   --version 0.59.0 -n flux-system --wait
 ```
 
 values は既定のままでよい。
+
+**`homelab/expose=true` のラベルが要る。**
+external Gateway の `allowedRoutes` が `Selector` になっており、このラベルを持つ namespace からの `HTTPRoute` しか受け付けない。
+付けないと Webhook Receiver の `HTTPRoute` が external に繋がらず、GitHub の push が届かなくなる。
+症状は「壊れない」ことである。Flux は `FluxInstance` の間隔（1時間）で同期し続けるため、反映が遅いことにしか気付けない。
+
+ラベルを namespace に手で付けるのは、`flux-system` が flux-operator の管理下にあるためである。
+Flux のマニフェストから同じ namespace を宣言すると、`prune` でこの namespace を消しに行く経路ができる。
 
 ## 7. age の秘密鍵をクラスターに入れる
 
@@ -128,6 +141,12 @@ kubectl -n flux-system get kustomization
 | Gateway API の CRD | Cilium | operator が起動時に CRD の存在を検査する |
 | Cilium | flux-operator | Pod ネットワークがなければコントローラーが動かない |
 | `sops-age` | `FluxInstance` | 先に入れないと復号に失敗し続ける |
+
+**ZBF を先に入れておくなら、BGP の確認を組み直しの直後に行う。**
+[design.md](../design.md#ポリシー) は「Gateway ゾーンは既定で許可される」ことを前提に、Server から `192.168.20.1:179` へのポリシーを書いていない。
+これは組み込みゾーンの既定の挙動であり、**VLAN 20 をカスタムゾーンへ移したあとでは確かめていない**。
+R4 で BGP が張れたのは全 VLAN が Internal にいた時点の実測であり、この前提の裏付けにはならない。
+`cilium bgp peers` が `established` にならなければ、Server → Gateway の 179 を明示的に許可する。
 
 Longhorn は Flux が入れるため、bootstrap の手順には現れない。
 ただしワーカーの schematic に `iscsi-tools` と `util-linux-tools` が要り、kubelet の `extraMounts` も要る。

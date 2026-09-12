@@ -133,8 +133,25 @@ design.md が external-dns を2系統立てる構成にしているのは、spli
 **LAN 内のクライアントが必ず内部 DNS を引くこと。**
 ここが最も破れやすい。
 ブラウザの DoH（Firefox や Chrome の Secure DNS）、iOS と Android の Private DNS、DNS サーバーをハードコードした機器は内部 DNS を迂回し、Cloudflare 経由の応答を受け取る。
-UCG-Fiber で外向きの 53 番をリダイレクトし、既知の DoH エンドポイントを塞ぐ必要がある。
-塞がないと、LAN 内アクセスをインターネットに出さないという前提が、気付かないうちに崩れる。
+
+**DoH エンドポイントの遮断は R9 で見送った。**
+UniFi でこれをやる唯一の口は、ゾーンペアに BLOCK のポリシーを置くことである。
+`unifi_setting` の `doh` はゲートウェイ自身の上流リゾルバの設定であって、クライアントの遮断ではない。
+BLOCK は Trusted / Untrusted / Management → External に置くことになり、同じゾーンペアにある「すべて許可」と完全に重なる。
+重なった時点で評価順が結果を決めるが、`unifi_firewall_policy` の `index` は read-only で末尾に追加されるため、後から足した BLOCK は許可の下に入って効かない。
+[Zone-Based Firewall を Terraform に置き続けるための条件](terraform-provisioning.md#評価順は動作が割れるときにしか意味を持たない)を、この1本が壊す。
+
+**受け入れる範囲を書いておく。**
+DoH を使うクライアントは内部 DNS を迂回し、そのサービスへのアクセスは Cloudflare Edge を経由する。
+届かなくなるわけではない。Tunnel を通って同じサービスに繋がる。
+失われるのは「LAN 内アクセスは Cloudflare を通らない」という性質であり、具体的には次の3つである。
+
+- 通信が宅内で完結しない。速度と可用性がインターネット側に依存する
+- Pi-hole の広告ブロックとクラスター上のホスト名の解決が効かない
+- そのクライアントには Cloudflare Access と WAF が効く（こちらは利点でもある）
+
+外向きの 53 番のリダイレクトは BLOCK ではないため、これは別途やってよい。
+ハードコードされた DNS サーバーを内部へ寄せる効果はそれで得られる。
 
 **内部アクセス用の TLS 証明書。**
 LAN 内は Cloudflare を通らないため、Gateway 自身が有効な証明書を出す。
@@ -191,9 +208,13 @@ Cilium が LB IP に対する ICMP を実装していないためで、[cilium#1
 疎通確認は必ず TCP で行う。
 ping が通らないことを障害と読み違えると、切り分けを誤る。
 
-**リハーサル環境の Cilium は VXLAN で動いている。**
-`cilium-config` は `routing-mode=tunnel`、`tunnel-protocol=vxlan` である。
-plan.md の R2 の結果表に「`KubeProxyReplacement` が `True`（Direct Routing）」とあるが、この "Direct Routing" は `cilium status` が kube-proxy 置換のバックエンド到達方式として表示するものであり、Pod ネットワークのルーティングモードではない。
+**調査時点（2026年9月8日）の Cilium は VXLAN で動いていた。**
+`cilium-config` が `routing-mode=tunnel`、`tunnel-protocol=vxlan` だった。
+R9 で `native` に切り替えている（[cilium-routing-mode.md](cilium-routing-mode.md)）。
+
+`cilium-dbg status` が `KubeProxyReplacement` の行に出す "Direct Routing" は、kube-proxy 置換のバックエンド到達方式であって Pod ネットワークのルーティングモードではない。
+routing mode は `Routing: Network:` の行にしか出ない。
+plan.md の R2 結果表にあった紛らわしい記述は R9 で訂正した。
 
 **VLAN 設計はまだ実装の途中である。**
 調査時点で作業端末は `192.168.1.118`、ゲートウェイと DNS はいずれも `192.168.1.1` だった。

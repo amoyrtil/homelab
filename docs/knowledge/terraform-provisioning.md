@@ -43,8 +43,8 @@ UniFi の VLAN とファイアウォール、Cloudflare の Tunnel と DNS は�
 Zone-Based Firewall のポリシーは評価順に意味がある。
 中身を Terraform に載せても評価順は UI に残るため、1つの関心事の所有者が2つになる。
 
-**この制約を理由に、Zone-Based Firewall は Terraform の管理対象から外した。**
-design.md の VLAN 間ポリシー表は設計の記述として残し、実装は UI で行う。
+**R8 ではこの制約を理由に Terraform の管理対象から外した。**
+**R9 でこの判断を覆した。**理由は「[評価順は、動作が割れるときにしか意味を持たない](#評価順は動作が割れるときにしか意味を持たない)」にある。
 
 ## Cloudflare provider
 
@@ -61,13 +61,23 @@ Tunnel 周りは `zero_trust_tunnel_cloudflared` と `_config` と `_route` に�
 Terraform と Flux と external-dns が同じリソースを触ると壊れる。
 所有者を1つに決める。
 
+ここは R8 時点の表である。
+現在の所有権は [design.md の「リソースの所有権」](../design.md#リソースの所有権)にある。
+R9 でファイアウォールが Terraform 側に移り、UI 所有のものにも所有者を書いた。
+
 | リソース | 所有者 |
 | --- | --- |
 | UniFi の VLAN、BGP | Terraform |
-| Cloudflare のゾーン設定、Tunnel、API トークン、Access のアプリとポリシー | Terraform |
+| Cloudflare のゾーン設定、Tunnel、Access のアプリとポリシー | Terraform |
 | Cloudflare のサービス用 DNS レコード | external-dns |
 | Tunnel の ingress ルール | クラスターの ConfigMap（Flux） |
 | クラスター内のすべて | Flux |
+
+**API トークンはこの表から外した。**
+`cloudflare_api_token` のリソースは書いていない。
+Terraform 自身が使うトークンを Terraform で作ることはできず（secret zero と同じ形）、
+ランタイム用のトークンも UI で発行している。
+発行手順は `terraform/secrets.example.env` にある。
 
 **DNS レコードの所有者は1つでなければならない。**
 external-dns は TXT レジストリで自分が作ったレコードを記録し、記録にないものを管理外と見なす。
@@ -95,18 +105,97 @@ Terraform が持てるのは apex や MX、各種の検証レコードのよう�
 宅内のスイッチの設定であって homelab に固有ではなく、ポートの種類も増えない。
 1度作れば済むものをコードに写しても、state と UI の二重管理が増えるだけで得るものがない。
 
-**Zone-Based Firewall も対象外とした。**
-ポリシーは量産する要素であり、条件のうえでは当てはまる。
+**Zone-Based Firewall は R8 では対象外とし、R9 で載せることにした。**
+ポリシーは量産する要素であり、載せる条件のうえでは最初から当てはまっていた。
 外したのは provider が評価順を扱えないためである。
-「[ポリシーの順序は provider から管理できない](#ポリシーの順序は-provider-から管理できない)」にある。
-
-ゾーン（`unifi_firewall_zone`）には順序の制約がない。
-ただし数が増えず homelab 固有でもないため、この基準では同じく対象外になる。
-ポリシーだけを外してゾーンを残す形も、片方だけをコードにする分かりにくさが残る。
+その制約が効かない書き方があると R9 で分かった（次節）。
 
 `ubiquiti-community/unifi` は `unifi_setting` や `unifi_wlan` のように、
 コントローラーのほとんどの設定を扱えるだけのリソースを持っている。
 扱えることと載せるべきことは別である。
+
+## 評価順は、動作が割れるときにしか意味を持たない
+
+R9（2026年9月11日）の監査で、R8 の除外理由を見直した。
+
+`unifi_firewall_policy` の `index` が read-only であることは、いまも変わらない。
+provider のドキュメントにこう書いてある。
+
+> `index` (Number) The ordering index of the policy within its zone-pair, assigned by the controller.
+> **Read-only:** UniFi does not accept a client-supplied index on create or update ...
+> so policy ordering cannot be managed through this provider.
+
+覆したのは「評価順に意味がある」という前提のほうである。
+
+**評価順が結果を変えるのは、1つのパケットに複数のポリシーが一致し、かつ動作が割れるときだけである。**
+許可しか無い集合は、どの順に並べても結果が同じになる。
+重ならないポリシーなら、拒否が混じっても順序は効かない。
+
+### 許可だけで書ける理由
+
+**新規に作ったゾーンは、ゾーン間もゾーン内も既定で拒否になる。**
+既定で許可するのは組み込みのゾーンだけで、Internal は「ゾーン内の全ネットワーク相互を許可する」ポリシーを持って出荷される。
+
+> By default, a zone can't access any other zone, except of course the Gateway and established traffic is allowed to the external zone.
+> ([LazyAdmin: UniFi Zone-Based Firewall](https://lazyadmin.nl/home-network/unifi-zone-based-firewall/))
+
+VLAN ごとにゾーンを切れば既定が拒否になり、拒否は「ポリシーを書かないこと」で表せる。
+「応答を除き拒否」は、逆向きの許可に `create_allow_respond`（UI の「Auto Allow return traffic」）を付ければよい。
+
+design.md の VLAN 間ポリシー表は、この形で許可20本・拒否0本に落ちた。
+うち8本は DNS の宛先（Backup DNS と Pi-hole）が決まるまで生成されないため、最初の apply は12本になる。
+
+### 何もしなければ全 VLAN が相互に到達する
+
+R9 が拾ったのは、そもそもポリシーが1本も入っていなかったことである。
+
+作った VLAN は順に Internal ゾーンへ入る。
+Internal はゾーン内相互を許可する既定ポリシーを持つため、**VLAN を切っただけでは分離されない**。
+guest ゾーンに入る Guest（VLAN 60）だけが例外だった。
+
+「Terraform に載せない」と決めた時点で、投入がどの作業リストからも落ちていた。
+**所有者を UI にすると決めたなら、UI で入れる作業を計画に書く。**
+
+### ネットワークの所属は片側からだけ書く
+
+`unifi_network` は `firewall_zone_id` を、`unifi_firewall_zone` は `network_ids` を持つ。
+provider が明示的に警告している。
+
+> This field is dual-managed and can compete with `unifi_firewall_zone.network_ids`.
+> To prevent state drift loops, ensure you manage zone membership from exactly one side.
+
+ゾーン側（`network_ids`）に寄せた。
+`networks.tf` は `firewall_zone_id` を書いていないため、衝突しない。
+
+### apply の途中で一時的に到達できなくなる
+
+ポリシーがゾーンの ID を参照するため、Terraform はゾーンを先に作る。
+ネットワークがゾーンへ移ってからポリシーが入るまでのあいだ、VLAN 間はすべて拒否になる。
+
+**apply 自体は詰まらない。**
+コントローラーは Gateway ゾーンにいて既定で許可されるため、その窓のあいだも provider は喋り続けられる。
+
+危ないのは順序ではなく、暫定の許可を忘れることである。
+作業端末が VLAN 1 にいるうちに他の VLAN をカスタムゾーンへ移すと、Internal には VLAN 1 しか残らない。
+Internal から新規ゾーンへの組にはポリシーが無く、既定拒否になる。
+`kubectl` も `talosctl` も LB IP も届かなくなる。
+
+`var.keep_default_vlan_access` がこの窓を埋める。
+作業端末を VLAN 30 へ、UCG-Fiber の管理アドレスを VLAN 10 へ移したら `false` にする。
+
+### 組み込みゾーンの ID は data source で引く
+
+Internal、External、Hotspot の ID はコントローラーが持つ。
+`data "unifi_firewall_zone"` が名前から引ける。
+
+```hcl
+data "unifi_firewall_zone" "external" {
+  name = "External"
+}
+```
+
+Guest（VLAN 60）は Hotspot ゾーンに残す。
+`unifi_network` の `purpose = "guest"` はこのゾーンに属しているあいだしか保てない（「[Guest の purpose はゾーンと結合している](#guest-の-purpose-はゾーンと結合している)」）。
 
 ## state をどこに置くか
 
@@ -267,6 +356,32 @@ DynamoDB 相当の外部テーブルは要らない。
 OpenTofu は backend ブロックで変数と local を使えるので、`init` の時点で解決できる値であれば書ける。
 偽のアカウント ID で `init` を回し、エンドポイントが展開されて TLS の握手まで到達することを確認した。
 
+### drift の検出は自動化しない
+
+R9 で検討し、**自動化しないことを決めた**。
+
+UniFi は provider が controller への到達を要求するため、CI から原理的に届かない。
+Cloudflare 側は CI から回せる。
+ただし `plan` に要るのは Cloudflare のトークン、R2 の鍵、state のパスフレーズであり、
+これらを GitHub の Secret に置くことになる。
+age の秘密鍵を置く必要は無いが、**同じ秘密が SOPS の外にもう1組できる**。
+state のパスフレーズは state 全体を開ける。
+
+drift を見つける利益より、秘密の置き場を増やす損のほうが大きい。
+
+代わりに運用で見る。
+フェーズの節目と、UI で何かを触ったあとに両方回す。
+
+```console
+$ mise run terraform cloudflare plan
+$ mise run terraform unifi plan
+```
+
+R9 で実際に回したときは、R8 の apply から1日経っても `ssl` と `min_tls_version` の2件（意図した変更）以外に差分は無かった。
+UI を触らなければ drift は出ない。
+
+**やらないと決めることと、決めずに放置することは違う。**
+
 ### バケットは Terraform で管理しない
 
 state を置く器を state で管理すると、壊したときに足場がなくなる。
@@ -284,7 +399,8 @@ state を置く器を state で管理すると、壊したときに足場がな�
 ## Tunnel の回収
 
 Tunnel の名前は `blackwall` である。
-UUID は `mise run terraform cloudflare output tunnel_id` で確認できる。
+UUID は `mise run terraform cloudflare output -raw tunnel_id` で確認できる。
+output に `sensitive` を立てているため、`-raw` が要る。
 `config_src` に `local` を指定し、`cloudflare_zero_trust_tunnel_cloudflared_config` は作らない。
 ingress ルールはクラスターの ConfigMap が持ち、Flux が反映する。
 `_config` を作ると Zero Trust ダッシュボード側にも設定が生まれ、所有者が2つになる。
@@ -315,7 +431,7 @@ mise から外し、`~/.cloudflared` も消した。
 | 用途 | 代替 |
 | --- | --- |
 | Tunnel の作成 | `cloudflare_zero_trust_tunnel_cloudflared` |
-| UUID の確認 | `mise run terraform cloudflare output tunnel_id` |
+| UUID の確認 | `mise run terraform cloudflare output -raw tunnel_id` |
 | コネクション数の確認 | API の `/accounts/<account_id>/cfd_tunnel/<tunnel_id>` |
 
 資格情報は失われない。
@@ -328,6 +444,10 @@ mise から外し、`~/.cloudflared` も消した。
 | `apply` | `1 imported, 0 added, 0 changed, 0 destroyed` |
 | 直後の `plan` | `No changes` |
 | トンネルのコネクション | 4本を維持（`nrt09` `nrt12` `nrt14` `nrt15`） |
+
+**接続先の colo は計測のたびに変わる。**
+R7 の記録（[gateway-and-tunnel.md](gateway-and-tunnel.md)）は `nrt10` から始まっており、こちらは `nrt09` である。
+再接続で割り当てが変わるだけで、どちらも正しい。本数が4本であることだけが意味を持つ。
 | cloudflared の Pod | 再起動なし。再接続のログもなし |
 | R2 の state | 誤ったパスフレーズで `cipher: message authentication failed`。保管時に暗号化されている |
 | 公開 URL | Cloudflare Edge からオリジンまで到達。HTTP から HTTPS へ `301` |
@@ -353,10 +473,9 @@ mise から外し、`~/.cloudflared` も消した。
 型が7つとも文字列であるため、`locals` のマップと `for_each` で書ける。
 `import` ブロックも `for_each` を取れるので、7件を2ブロックで回収できた。
 
-**`ssl` と `min_tls_version` は見直す価値がある。**
-Cloudflare がトンネル構成に推奨するのは Full 系であり、TLS 1.0 と 1.1 は非推奨である。
-ただし R8 はコード化であって設定の変更ではない。
-現在値のまま取り込み、判断は R9 の監査に送る。
+**この表は R8 で取り込んだ時点の値である。**
+`ssl` と `min_tls_version` は R9 で `strict` と `1.2` に引き上げた。
+経緯は [gateway-and-tunnel.md の「ゾーン設定を引き上げる」](gateway-and-tunnel.md#ゾーン設定を引き上げる)にある。
 
 `apply` は `7 imported, 0 added, 0 changed, 0 destroyed` で、直後の `plan` は `No changes`。
 API で読み直した7つの値は apply の前後で変わらず、公開 URL も `301` と `404` のまま応答した。
@@ -454,8 +573,9 @@ VLAN 60 は `purpose = "guest"` である。
 Zone-Based Firewall のコントローラーでは、この値を保てるのはそのネットワークが guest ゾーンに属しているあいだだけである。
 ゾーンから外すとコントローラーが `corporate` に書き戻し、apply が inconsistent result で落ちる。
 
-ゾーンはまだ Terraform に載せていない。
-`unifi_firewall_zone` を入れるまで UI の管理のまま置く。
+**Guest だけは Terraform のゾーン定義に入れない。**
+R9 でゾーンを載せたが、Guest は組み込みの Hotspot ゾーンに残す。
+`firewall.tf` は `data "unifi_firewall_zone"` で参照するだけで、所属を書き換えない。
 
 ### 回収の実測（2026年9月10日）
 
@@ -470,16 +590,24 @@ Zone-Based Firewall のコントローラーでは、この値を保てるのは
 import は読み取りだけで完結する。
 `0 to change` の plan であれば、コントローラーへの書き込みは1本も出ない。
 
-### 設計と現状の差分は R9 に送る
+### 設計と現状の差分は R9 に送った
 
 コード化と設定の変更を混ぜない。
 Cloudflare の `ssl = flexible` と同じ扱いで、現在値のまま取り込んだ。
 
-| 項目 | design.md / plan.md の記述 | コントローラーの現在値 |
+R9 で3件とも判定した。結果は [plan.md の「いまのネットワークの状態」](../plan.md#いまのネットワークの状態)にある。
+
+| 項目 | R8 時点のコントローラーの値 | R9 の判定 |
 | --- | --- | --- |
-| DHCP プール | VLAN 20 のみ `.150-.250` と規定 | VLAN 20 以外は UniFi 既定の `.6-.254` |
-| mDNS | 「VLAN 30 と 40 で有効化する」 | 全 VLAN で有効 |
-| DHCP Guarding | 「VLAN 30 と 60 に価値がある」 | VLAN 20 のみ有効 |
+| DHCP プール | VLAN 20 以外は UniFi 既定の `.6-.254` | 設計を現状へ寄せた。VLAN 20 以外に予約帯を空ける理由がない |
+| mDNS | 全 VLAN で有効 | 現状を設計へ寄せる。VLAN 30 と 40 だけに絞る |
+| DHCP Guarding | VLAN 20 のみ有効 | VLAN 20・30・60 の3つにする。`networks.tf` 改訂済み |
+
+**mDNS だけ `networks.tf` に書いていない。**
+provider の `multicast_dns` は「一部のコントローラー（特に UniFi OS のゲートウェイ）が
+`mdns_enabled` を無視して常に `false` を保存する」とスキーマに注記があり、
+UCG-Fiber で書けるかを確かめていない。
+フェーズ1で UI から変えるときに試し、書けるならここに足す。
 
 ## BGP の回収
 

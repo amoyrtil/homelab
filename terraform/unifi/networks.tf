@@ -46,7 +46,8 @@ locals {
       setting_preference = "auto"
       dhcp_start         = "192.168.30.6"
       dhcp_stop          = "192.168.30.254"
-      dhcp_guard_servers = null
+      # 持ち込まれた機器やルーターが DHCP を配り始める事故を止める。
+      dhcp_guard_servers = ["192.168.30.1"]
     }
     untrusted = {
       name               = "Untrusted"
@@ -75,12 +76,14 @@ locals {
       # purpose が guest でいられるのは、このネットワークが guest ゾーンに
       # 属しているあいだだけである。ゾーンを外すとコントローラーが corporate に
       # 書き戻し、apply が inconsistent result で落ちる。
-      # ゾーンは unifi_firewall_zone を入れるまで UI の管理のまま置く。
+      # このため Guest だけは組み込みの Hotspot ゾーンに残し、firewall.tf の
+      # local.zones には入れない。
       purpose            = "guest"
       setting_preference = "auto"
       dhcp_start         = "192.168.60.6"
       dhcp_stop          = "192.168.60.254"
-      dhcp_guard_servers = null
+      # ゲストの機器は素性が分からない。偽の DHCP サーバーを止める。
+      dhcp_guard_servers = ["192.168.60.1"]
     }
     service = {
       name    = "Service"

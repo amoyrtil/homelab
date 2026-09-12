@@ -22,6 +22,26 @@ cgroup:
     enabled: false
   hostRoot: /sys/fs/cgroup
 
+# カプセル化しない。ノードは全台 VLAN 20 の同一 L2 にいるため、相手の PodCIDR へ
+# 直接経路を張れる。autoDirectNodeRoutes がそれをホストの経路表に入れる。
+#
+# 既定の VXLAN のままだと経路の実効 MTU が 1450 に落ち、Pod 間の全パケットに
+# 50 バイトのオーバーヘッドが乗る。R9 で切り替えて実測した値は次のとおり。
+#
+#              経路の MTU   断片化しない最大ペイロード
+#   vxlan        1450          1422 B
+#   native       1500          1472 B
+#
+# レイテンシとスループットに差は出なかったが、リハーサル環境は cp-1 が
+# 100 Mbit の USB NIC で繋がっており、そこが上限になるため測れていない。
+# 記録は docs/knowledge/cilium-routing-mode.md にある。
+#
+# 稼働中のクラスターで変えるとエージェントの入れ替えでデータプレーンが途切れ、
+# BGP セッションも張り直しになる。クラスターを組むときに入れる。
+routingMode: native
+autoDirectNodeRoutes: true
+ipv4NativeRoutingCIDR: 10.244.0.0/16
+
 # bpf.autoMount は無効にしない。無効にすると hostPath ボリュームの定義ごと
 # 落ちるため、cilium-envoy から BPF マップが見えなくなり Gateway が 500 を返す。
 # エージェントは特権で直接触れるので症状が出ず、Envoy 側だけが壊れる。

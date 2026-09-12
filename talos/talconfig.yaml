@@ -23,14 +23,14 @@ additionalApiServerCertSans:
 
 nodes:
   # cp-1 = morty。内蔵 I226-V は 4-5 / 7-8 ペアの物理層障害があるため USB ドングルを使う。
-  # 詳細は docs/plan.md「既知の制約: S100-WLP の NIC 障害と USB NIC による回避」を参照。
+  # 詳細は docs/design.md「現在保有している機材」を参照。
   - hostname: cp-1
     ipAddress: 192.168.20.31
     controlPlane: true
     installDisk: /dev/sda # UFS デバイス
     # Talos v1.14 で標準カーネルが UFS に対応したため talos-ufs は不要になった。
     # 拡張を含まない素の schematic を使う。検証の記録は
-    # docs/plan.md「Talos v1.14 への移行と talos-ufs の存廃」を参照。
+    # docs/knowledge/talos-v1.14-ufs.md を参照。
     talosImageURL: factory.talos.dev/metal-installer/376567988ad370138ad8b2698212367b8edcb69b5fd68c80be1f2ec7d603b4ba
     nameservers:
       - 192.168.20.1
@@ -50,7 +50,7 @@ nodes:
           ip: 192.168.20.100
 
   # cp-2 = jerry は 2026年9月6日に talos-ufs の要否検証に使い、クラスターから外した。
-  # 経緯は docs/plan.md「Talos v1.14 への移行と talos-ufs の存廃」を参照。
+  # 経緯は docs/knowledge/talos-v1.14-ufs.md を参照。
   # コントロールプレーンは EliteDesk 800 G6 に置き換えるため、ここには戻さない。
 
   # worker-1 = MS-03。NIC は4つとも認識されている。

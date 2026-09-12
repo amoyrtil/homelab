@@ -121,32 +121,100 @@ DHCP は動かさない。
 
 ### VLAN 間ポリシー
 
-| 送信元 | 宛先 | 方針 |
+Zone-Based Firewall で実装する。
+**VLAN ごとにゾーンを1つ切る。**
+
+| ゾーン | 収容する VLAN | 区分 |
 | --- | --- | --- |
-| Trusted | Management | 許可（UniFi 管理 UI） |
-| Trusted | Server | 許可（kubectl、NAS、各サービスの Web UI） |
-| Trusted | Service | 許可（クラスター上のサービス） |
-| Trusted | Untrusted | 許可（家電の操作） |
-| Server | Service | 許可（VLAN 20 の機器からクラスター上のサービスへ） |
-| Server | Trusted | 応答を除き拒否 |
-| Server | インターネット | 許可 |
-| Untrusted | 内部 VLAN 全般 | 応答と DNS を除き拒否 |
-| Untrusted | インターネット | 許可 |
-| Camera | NVR | 許可 |
-| Camera | インターネット | 拒否 |
-| Guest | 内部 VLAN 全般 | DNS を除き拒否 |
-| Guest | インターネット | 許可 |
+| Management | 10 | 新規 |
+| Server | 20 | 新規 |
+| Trusted | 30 | 新規 |
+| Untrusted | 40 | 新規 |
+| Camera | 50 | 新規 |
+| Service | 120 | 新規 |
+| Hotspot | 60（Guest） | 組み込み |
+| Internal | 1（Default） | 組み込み |
+| External | WAN | 組み込み |
+| Gateway | UCG-Fiber 自身 | 組み込み |
+
+**新規に作ったゾーンは、ゾーン間もゾーン内も既定で拒否になる。**
+組み込みの Internal だけが「ゾーン内の全ネットワーク相互を許可する」既定ポリシーを持って出荷されており、VLAN を作った順に全部そこへ入るため、何もしなければ全 VLAN が相互に到達する。
+
+Guest（VLAN 60）は Hotspot ゾーンに置く。
+`unifi_network` の `purpose = "guest"` はこのゾーンに属しているあいだしか保てない（[knowledge/terraform-provisioning.md](knowledge/terraform-provisioning.md)）。
+
+### ポリシー
+
+**書くのは許可だけである。**
+拒否はポリシーを書かないことで表す。
+「応答を除き拒否」は、逆向きの許可に「応答の自動許可」を付けることで表す。
+
+| # | 送信元 | 宛先 | 対象 | 応答 | 意図 |
+| --- | --- | --- | --- | --- | --- |
+| 1 | Trusted | Management | すべて | ✓ | UniFi 管理 UI |
+| 2 | Trusted | Server | すべて | ✓ | kubectl、NAS、各サービスの Web UI |
+| 3 | Trusted | Service | すべて | ✓ | クラスター上のサービス |
+| 4 | Trusted | Untrusted | すべて | ✓ | 家電の操作 |
+| 5 | Trusted | External | すべて | — | インターネット |
+| 6 | Server | Service | すべて | ✓ | VLAN 20 の機器からクラスター上のサービスへ |
+| 7 | Server | External | すべて | — | イメージの取得、Cloudflare、ACME |
+| 8 | Untrusted | External | すべて | — | 家電のクラウド接続 |
+| 9 | Management | External | すべて | — | UniFi 機器の更新 |
+| 10-17 | Untrusted / Camera / Hotspot / Management | Server の `192.168.20.10`、Service の Pi-hole | 53 tcp・udp | ✓ | 名前解決 |
+| 18 | Camera | NVR | 未定 | ✓ | 録画先が決まってから決める |
+| 19-21 | Internal | Server / Service / Management | すべて | ✓ | **暫定**。移行が終わったら削除する |
+
+拒否は書かないため表に現れない。
+設計としての意図を残す。
+
+| 送信元 | 宛先 | 結果 | 表し方 |
+| --- | --- | --- | --- |
+| Server | Trusted | 応答を除き拒否 | #2 の応答許可だけが通る |
+| Untrusted | 内部 VLAN 全般 | 応答と DNS を除き拒否 | #4 と #8 の応答、#10-17 の DNS だけが通る |
+| Guest | 内部 VLAN 全般 | DNS を除き拒否 | #10-17 の DNS だけが通る |
+| Camera | インターネット | 拒否 | ポリシーを書かない |
+| Camera | Camera 以外 | 拒否 | ポリシーを書かない |
 
 「内部 VLAN 全般」には VLAN 120 を含む。
 Untrusted と Guest からクラスター上のサービスには到達させない。
 
-この表は、BGP で学習した `/32` が VLAN 120 のゾーンに分類されることを前提にしている。
+**Gateway ゾーンは既定で許可される。**
+UCG-Fiber 自身宛の DHCP、DNS、BGP（Server から 179）はポリシーを書かなくても通る。
+ノードの `nameservers` が `192.168.20.1` を指す構成、Cilium が `192.168.20.1` とピアを張る構成は、どちらもこれに乗っている。
+
+**この表は BGP で学習した `/32` が VLAN 120 のゾーンに分類されることを前提にしている。**
 next-hop がワーカーのいる VLAN 20 にあっても宛先ネットワークで判定されることは、実機で確認済みである（[knowledge/bgp-peering.md](knowledge/bgp-peering.md)）。
 
-NVR をクラスター上に置く場合は Camera から VLAN 120 への許可が要る。
-録画先が決まっていないため、現時点では拒否のままにする（[plan.md](plan.md#いずれ回収する項目) の「UniFi Protect の録画先」）。
+NVR をクラスター上に置く場合は #18 が Camera から Service への許可になる。
+録画先が決まっていないため、現時点ではポリシーを置かない（[plan.md](plan.md#いずれ回収する項目) の「UniFi Protect の録画先」）。
 
-全 VLAN から `192.168.20.10`（Backup DNS）への 53/udp と 53/tcp を個別に許可する。
+**#19-21 は移行が終わるまでの暫定である。**
+VLAN 1 には機器を収容しない方針だが、いま作業端末がそこにいる。
+他の VLAN がカスタムゾーンへ移ると Internal には VLAN 1 しか残らず、Internal から新規ゾーンへの組にはポリシーが無いため既定拒否になる。
+暫定の許可を置かないと、作業端末から `kubectl` も `talosctl` も LB IP も届かなくなる。
+作業端末を VLAN 30 へ、UCG-Fiber の管理アドレスを VLAN 10 へ移したら削除する（[plan.md](plan.md#構築の作業)）。
+
+### 評価順に依存させない
+
+`unifi_firewall_policy` の `index` は read-only であり、Terraform から評価順を指定できない。
+それでもこのポリシー集合を Terraform で扱えるのは、**同じパケットに一致する許可と拒否が同居しないため**である。
+
+評価順が結果を変えるのは、1つのパケットに複数のポリシーが一致し、かつ動作が割れるときだけである。
+上の表は許可しか持たず、拒否は「ポリシーの不在」で表している。
+どの順に並べても結果が変わらない。
+
+**この性質を壊さないことが、ZBF を Terraform に置き続けるための条件である。**
+拒否のポリシーを1本足したくなったときは、それが既存の許可と重ならないことを確かめる。
+重なるなら、そのポリシーは Terraform に置けない。
+
+**実際に1本、この条件に当たって見送ったものがある。**
+DoH エンドポイントの遮断である。
+Trusted / Untrusted / Management → External に BLOCK を置くことになり、同じゾーンペアの #5・#8・#9 と完全に重なる。
+R9 で見送りを決めた（[knowledge/service-exposure.md](knowledge/service-exposure.md#成立の条件)）。
+
+条件に当たるものが今後も出る。
+そのときは「Terraform から外して UI に置く」か「機能を見送る」かを選ぶ。
+**中身をコードに置いて順序を UI に残す形は採らない。** 1つの関心事の所有者が2つになる。
 
 ### BGP
 
@@ -176,8 +244,27 @@ Cilium 側の3つのリソースは `bootstrap/cilium-bgp.yaml` にある。
 
 ### 必要な設定
 
-UniFi の mDNS リフレクタを VLAN 30 と VLAN 40 で有効化する。
+**mDNS リフレクタは VLAN 30 と VLAN 40 だけで有効にする。**
 HomeKit と Matter が使う mDNS が両 VLAN をまたぐためである。
+Camera と Guest には要らない。
+リフレクタは VLAN を越えた探索を通すものであり、要らないところで有効にしておく理由がない。
+
+**DHCP プールを絞るのは VLAN 20 だけである。**
+`.1-.149` を静的割り当てと DHCP 予約のために空ける（[VLAN 20 のアドレス割り当て](#vlan-20-のアドレス割り当て)）。
+他の VLAN は UniFi 既定の `.6-.254` のままにする。
+サーバー以外の VLAN でアドレス帯を予約する必要がなく、狭めても得るものがない。
+
+**DHCP Guarding は VLAN 20、30、60 で有効にする。**
+許可する DHCP サーバーは、その VLAN のゲートウェイだけとする。
+
+| VLAN | 理由 |
+| --- | --- |
+| 20 Server | ノードは `reset` するとメンテナンスモードで DHCP に落ちる。そこで偽のサーバーに当たると、別セグメントのアドレスを掴んで見失う（[knowledge/talos-operations.md](knowledge/talos-operations.md)） |
+| 30 Trusted | 持ち込まれた機器やルーターが DHCP を配り始める事故が起きうる |
+| 60 Guest | 同上。ゲストの機器は素性が分からない |
+
+Untrusted と Camera には入れない。
+どちらも持ち込みの機器を置く VLAN ではなく、構成が変わらない。
 
 ## ノードのイメージ
 
@@ -197,6 +284,10 @@ ISO は同じ ID から `https://factory.talos.dev/image/<ID>/v1.14.0/metal-amd6
 schematic を変更したら、このドキュメントの ID も更新する。
 
 S100-WLP をワーカーに回す場合は、Longhorn の前提条件を満たすために `iscsi-tools` と `util-linux-tools` を含む schematic に差し替える。
+
+**ディスク暗号化は入れない。**
+STATE と EPHEMERAL は素のパーティションのままにする。
+判断の根拠と、これが変わる条件は [knowledge/design-rationale.md](knowledge/design-rationale.md#ディスク暗号化を入れない) にある。
 
 ### コントロールプレーン（HP EliteDesk 800 G6）
 
@@ -288,20 +379,64 @@ Talos の kubelet はコンテナで動くため、これがないと CSI が作
 
 レプリカ数はフェーズ1で 1、S100-WLP をワーカーに足すフェーズ2で 2 に上げる。
 
+### バックアップ
+
+**Longhorn の backupstore は DS923+ の SMB 共有に置く。**
+フェーズ1から入れる。
+
+レプリカを増やすのはフェーズ2だが、バックアップはそれより先に要る。
+フェーズ1はワーカー1台・レプリカ1であり、**その NVMe が飛べばボリュームは戻らない**。
+レプリカはノード障害に効くが、消してしまった操作や壊れたデータには効かない。
+冗長化とバックアップは別の問題である。
+
+| 項目 | 値 |
+| --- | --- |
+| backupstore | `cifs://<DS923+>/<共有名>` |
+| 資格情報 | `longhorn-system` の `cifs-secret`（`CIFS_USERNAME`、`CIFS_PASSWORD`）。SOPS で暗号化して Git に置く |
+| 設定方法 | Helm の `defaultBackupStore.backupTarget` と `backupTargetCredentialSecret` |
+| スケジュール | `RecurringJob` をマニフェストに置く |
+
+**Talos の拡張は要らない。**
+`mount.cifs` と `cifs.upcall` は `longhorn-manager` のイメージに入っており、`cifs` は Talos のカーネルが持つ。
+[ストレージ](#ストレージ)の表で csi-driver-smb に拡張が要らないとしているのと同じ理屈である。
+R9 で実機に確かめた。
+
+**Longhorn 自身は S3 を推奨している。**
+
+> Saving to an object store such as S3 is preferable because it generally offers better reliability.
+> Another advantage is that you do not need to mount and unmount the target, which can complicate failover and upgrades.
+
+それでも SMB を採るのは、**復元を宅内で完結させる**ためである。
+DS923+ の SMB 共有が既にあり、メディアの層でも同じプロトコルを使っている。
+NVMe が1本飛んだときに、インターネットの疎通にも外部サービスにも依存せずに戻せる。
+
+S3 互換そのものを避けているわけではない。
+Terraform の state は Cloudflare R2（S3 互換）に置いており、口は既にある。
+宅内で S3 互換を用意するなら Synology 側に MinIO 相当を建てることになり、
+**バックアップの置き場が別に運用するサービスの可用性に依存する**。それを避けた。
+
+宅外へのバックアップは別の話であり、必要になったら backupstore を足す。
+Longhorn は backupstore を複数持てるため、後から足すのは作り直しにならない。
+
+マウントの着脱が問題になるのは、backupstore が落ちたときに Longhorn の動作へ波及する場合である。
+バックアップが取れないこととボリュームが使えないことは切り分けて監視する。
+
+前提として **DS923+ を VLAN 20 に載せる**必要がある（[VLAN 20 のアドレス割り当て](#vlan-20-のアドレス割り当て)）。
+
 ## ソフトウェア構成
 
 ### 確定している方針
 
 - **OS**：Talos Linux。設定管理は talhelper（`talconfig.yaml`）
 - **CNI**：Cilium。kube-proxy を完全に置換し、eBPF モードで動かす。フェーズ1から入れる
-- **Ingress**：Cilium の Gateway API 実装を使う。専用の Ingress コントローラーを足さない。前提として `kubeProxyReplacement=true` と `l7Proxy=true` が要る。Gateway は internal と external の2本立てる。公開のスイッチを `HTTPRoute` の `parentRefs` に持たせるためである（[knowledge/gateway-and-tunnel.md](knowledge/gateway-and-tunnel.md)）
+- **Ingress**：Cilium の Gateway API 実装を使う。専用の Ingress コントローラーを足さない。前提として `kubeProxyReplacement=true` と `l7Proxy=true` が要る。Gateway は internal と external の2本立てる。公開のスイッチを `HTTPRoute` の `parentRefs` に持たせるためである（[knowledge/gateway-and-tunnel.md](knowledge/gateway-and-tunnel.md)）。**公開には namespace 側の許可も要る。** external Gateway の `allowedRoutes` は `Selector` であり、`homelab/expose: "true"` を持つ namespace からの `HTTPRoute` しか受けない
 - **LoadBalancer**：Cilium BGP。UCG-Fiber は UniFi OS 4.1.13 以降で BGP に対応しており、FRR 形式の設定ファイルをアップロードして構成する（Settings → Routing → BGP）。LB IP は VLAN 120 から払い出す。ノードと同じ VLAN には置けない（[knowledge/service-exposure.md](knowledge/service-exposure.md)）
 - **外部公開**：Cloudflare Tunnel。ルーターのポートを開けない
 - **証明書**：cert-manager + Let's Encrypt。DNS-01 チャレンジに Cloudflare を使う
 - **内部の名前解決**：external-dns の Pi-hole プロバイダーで、クラスターのホスト名を Pi-hole の Custom DNS に書き込む。DNS サーバーを別途立てない
 - **ストレージ**：「ストレージ」節のとおり。フェーズ1から入れる
 - **GitOps**：Flux v2。Flux Operator と FluxInstance で管理する。main ブランチへのマージをトリガーに反映する。flux-operator は bootstrap 側に helm で入れ、`FluxInstance` が `kubernetes/flux/cluster` を入口に同期する。アプリは `kubernetes/apps/<namespace>/<app>/{ks.yaml, app/}` に置く
-- **CI/CD**：Flux の Webhook Receiver を使う。GitHub Actions はクラスターに触らない。push イベントを Cloudflare Tunnel 経由で受け、Flux が即座に Git を pull する。CI 側の仕事はマニフェストの検証と Renovate による更新 PR に限る
+- **CI/CD**：Flux の Webhook Receiver を使う。GitHub Actions はクラスターに触らない。push イベントを Cloudflare Tunnel 経由で受け、Flux が即座に Git を pull する。CI 側の仕事はマニフェストの検証（`.github/workflows/validate.yaml`）と Renovate による更新 PR（`.github/renovate.json5`）に限る。kubeconfig も SOPS の鍵も CI には渡さない（[knowledge/flux-bootstrap.md](knowledge/flux-bootstrap.md#ci-は鍵を持たずに検証できる)）
 - **シークレット管理**：SOPS + age。暗号化済み Secret を Git にコミットする。Kubernetes のマニフェストは `encrypted_regex: ^(data|stringData)$` で `data` と `stringData` だけを暗号化する。age の秘密鍵は `flux-system` の `sops-age` Secret として手で入れる（[knowledge/flux-bootstrap.md](knowledge/flux-bootstrap.md)）
 - **リポジトリ構成**：`onedr0p/cluster-template` に準拠する
 - **ツール管理**：mise。ローカル環境の再現性を確保する
@@ -320,19 +455,33 @@ homelab のためだけに存在するリソースか、VLAN のように同じ�
 スイッチのポートプロファイルはこの基準で対象外とする。
 宅内のスイッチの設定であって homelab に固有ではなく、数も増えない。
 
-**Zone-Based Firewall も対象外とする。**
-`unifi_firewall_policy` の `index` が read-only であり、ポリシーの評価順を Terraform から指定できない。
-中身はコード、評価順は UI という分割になり、1つの関心事の所有者が2つになる。
-[VLAN 間ポリシー](#vlan-間ポリシー)の表は設計の記述として残し、実装は UI で行う。
+**Zone-Based Firewall は Terraform に載せる。**
+`unifi_firewall_policy` の `index` は read-only であり、評価順を Terraform から指定できない。
+それでも載せられるのは、[ポリシー](#ポリシー)を許可だけで構成し、評価順に意味を持たせないためである。
+条件と、それを壊さないための制約は[評価順に依存させない](#評価順に依存させない)にある。
+
+**載せないものにも所有者を書く。**
+所有者の空欄は、誰も投入しないまま残る原因になる。
 
 | リソース | 所有者 |
 | --- | --- |
-| UniFi の VLAN、BGP | Terraform |
-| Cloudflare のゾーン設定、Tunnel、API トークン、Access のアプリとポリシー | Terraform |
+| UniFi の VLAN、BGP、ファイアウォールのゾーンとポリシー | Terraform |
+| Cloudflare のゾーン設定、Tunnel、Access のアプリとポリシー | Terraform |
 | Cloudflare のサービス用 DNS レコード | external-dns（Cloudflare 系統） |
 | 内部 DNS のサービス用レコード | external-dns（Pi-hole 系統） |
 | Tunnel の ingress ルール | クラスターの ConfigMap。Flux が反映する |
 | クラスター内のリソース | Flux |
+| UniFi の WLAN（SSID） | UI。投入は[構築の作業](plan.md#構築の作業)にある |
+| UniFi の mDNS リフレクタ | UI。値は[必要な設定](#必要な設定)にある。provider の `multicast_dns` が UCG-Fiber で書けるかは未検証 |
+| UniFi のポートプロファイル、Local DNS Records | UI |
+| Cloudflare の apex と MX、各種の検証レコード、WAF | UI |
+| Cloudflare と UniFi の API トークン | 手で発行する。手順は `terraform/secrets.example.env` |
+| Terraform の state を置く R2 バケット | 手で作る。コードの管理対象に入れない |
+
+**所有者を書くだけでは足りない。**
+R9 で、ZBF が「UI が所有する」と決まったまま投入がどの作業リストにも無い状態になっていたことが分かった。
+WLAN も同じ形で残っていた。
+UI 所有にしたものは、**投入する作業を [plan.md](plan.md) に立てるところまでを1組にする。**
 
 DNS レコードの所有者が重なると、external-dns は TXT レジストリにない他人のレコードを管理外と見なして消しに行く。
 Terraform が持てるのは apex や MX、各種の検証レコードのように external-dns が触らないものだけである。
@@ -341,9 +490,17 @@ Tunnel は Terraform だけが持つ。
 `cloudflared` の CLI は使わない。作成も更新も Terraform から行い、CLI を残すと所有権の境界を崩す経路が1本残る。
 資格情報はクラスターの `cloudflared-credentials` にあり、作り直すときはそこから `credentials.json` を組み立てる。
 
-Cloudflare の API トークンも用途で分ける。
-cert-manager と external-dns のランタイム用には `Zone:DNS:Edit` と `Zone:Zone:Read` を与える。
-Terraform 用には Tunnel を作るための `Account:Cloudflare Tunnel:Write` を含む別のトークンを与える。
+Cloudflare の API トークンは用途で分ける。
+ランタイム用には `Zone:DNS:Edit` と `Zone:Zone:Read` を、Terraform 用には Tunnel を作るための `Account:Cloudflare Tunnel:Write` を含む別のトークンを与える。
+
+**トークンは Terraform で作らない。**
+Terraform 自身が使うトークンを Terraform で作ることはできず（secret zero と同じ形）、ランタイム用も UI で発行している。
+発行手順は `terraform/secrets.example.env` にある。
+
+**ランタイム用は cert-manager と external-dns で同じ値を使っている。**
+Cloudflare の API トークンはレコード名の単位まで絞れず、どちらも `Zone:DNS:Edit` を要求するため、分けても最小権限の利得がない。
+得られるのは「片方が漏れてももう片方を巻き込まない」「片方だけ Roll できる」という分離だけである。
+Roll するときに2本発行するなら追加コストがないので、そのときに分ける。
 
 ### フェーズ1で入れるコンポーネント
 
@@ -354,11 +511,16 @@ Terraform 用には Tunnel を作るための `Account:Cloudflare Tunnel:Write` 
 | kube-system | metrics-server | `kubectl top`、HPA |
 | cert-manager | cert-manager | Let's Encrypt、DNS-01 チャレンジに Cloudflare |
 | flux-system | flux-operator、flux-instance | GitOps と Webhook Receiver |
-| network | cloudflare-tunnel | 外部公開 |
+| network | cloudflared | 外部公開 |
 | network | external-dns（Cloudflare） | 公開 DNS レコード |
 | network | external-dns（Pi-hole） | 内部 DNS レコード |
-| longhorn-system | longhorn | ブロックストレージ |
+| longhorn-system | longhorn | ブロックストレージ。backupstore は DS923+ の SMB |
+| kube-system | csi-driver-smb | DS923+ の SMB 共有をボリュームとして使う |
 | （未定） | pi-hole | 宅内 DNS |
+
+リハーサル（R1-R8）では `metrics-server` と `csi-driver-smb` を扱っていない。
+どちらもフェーズ1で入れる。
+「[ソフトウェアの構成はフェーズをまたいで変えない](#構築のフェーズ)」という方針に従い、後から足す形にはしない。
 
 **採用しないもの**：`kube-vip`、`envoy-gateway`、`traefik`、`k8s-gateway`、`spegel`、`reloader`
 
@@ -399,6 +561,20 @@ v1alpha1 の `cluster.proxy.disabled` ではなく `KubeProxyConfig` ドキュ�
 | `cgroup.autoMount.enabled` | `false` | Talos が既に cgroupv2 を提供している |
 | `securityContext.capabilities` | `SYS_MODULE` を除く | Talos はワークロードにカーネルモジュールのロードを許さない |
 | `bgpControlPlane.enabled` | `true` | LoadBalancer IP を BGP で広告する |
+| `routingMode` | `native` | ノードが全台 VLAN 20 の同一 L2 にいるため、カプセル化しない |
+| `autoDirectNodeRoutes` | `true` | 相手の PodCIDR への直接経路をホストの経路表に入れる |
+| `ipv4NativeRoutingCIDR` | `10.244.0.0/16` | native routing の対象となる Pod CIDR |
+
+**カプセル化しない。**
+既定の VXLAN では経路の実効 MTU が 1450 に落ち、Pod 間の全パケットに 50 バイトが乗る。
+`routingMode: native` に変えると 1500 に戻る（[knowledge/cilium-routing-mode.md](knowledge/cilium-routing-mode.md)）。
+
+`autoDirectNodeRoutes` はノードが同一 L2 にあることを要求する。
+Kubernetes ノードは全台 VLAN 20 に置く設計であり、この前提は[VLAN 一覧](#vlan-一覧)で満たされている。
+
+**稼働中のクラスターで変えるとデータプレーンが途切れる。**
+エージェントの入れ替えで Pod 間の疎通が一時的に落ち、BGP セッションも張り直しになる。
+クラスターを組むときに入れる。
 
 **`bpf.autoMount.enabled` は指定しない。**
 公式ガイドは Talos が bpffs を提供済みであることを理由に `false` を挙げているが、このフラグは hostPath ボリュームの定義ごと落とすため、`cilium-envoy` から BPF マップが見えなくなる。

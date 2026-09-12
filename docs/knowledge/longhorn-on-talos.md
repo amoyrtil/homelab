@@ -127,6 +127,72 @@ Longhorn 固有の話ではなく、非 root の Pod がブロックボリュー
 書き込み速度はテスト Pod から `dd` で1回測った値であり、ベンチマークではない。
 DS923+ との実効スループットの測定は [plan.md](../plan.md) の「いずれ回収する項目」に残してある。
 
+## SMB の backupstore に Talos の拡張は要らない
+
+R9 の監査（2026年9月11日）で、バックアップ機構が1つも無いことが分かった。
+
+```console
+$ kubectl -n longhorn-system get backuptargets.longhorn.io
+NAME      URL   CREDENTIAL   AVAILABLE
+default                      false
+
+$ kubectl -n longhorn-system get recurringjobs.longhorn.io
+No resources found
+
+$ kubectl get crd volumesnapshotclasses.snapshot.storage.k8s.io
+Error from server (NotFound)
+```
+
+backupstore 未設定、定期ジョブ0件、snapshot-controller 未導入である。
+
+DS923+ の SMB 共有を backupstore にすることにした。
+Talos でこれが動くかを、拡張を足す前に実機で確かめた。
+
+```console
+$ kubectl -n longhorn-system exec longhorn-manager-xxxxx -c longhorn-manager -- \
+    sh -c 'command -v mount.cifs mount.nfs mount.nfs4 cifs.upcall'
+/sbin/mount.cifs
+/sbin/mount.nfs
+/sbin/mount.nfs4
+/usr/sbin/cifs.upcall
+
+$ kubectl -n longhorn-system exec longhorn-manager-xxxxx -c longhorn-manager -- \
+    grep cifs /proc/filesystems
+nodev	cifs
+```
+
+**`mount.cifs` は `longhorn-manager` のイメージに入っており、`cifs` は Talos のカーネルが持つ。**
+Image Factory の schematic に足すものはない。
+
+design.md が csi-driver-smb について書いている「`mount.cifs` はドライバ Pod 内で動く」と同じ理屈である。
+Longhorn の backupstore にもそのまま当てはまる。
+
+### Longhorn は S3 を推奨している
+
+> Saving to an object store such as S3 is preferable because it generally offers better reliability.
+> Another advantage is that you do not need to mount and unmount the target, which can complicate failover and upgrades.
+> ([Longhorn: Setting a Backup Target](https://longhorn.io/docs/1.10.0/snapshots-and-backups/backup-and-restore/set-backup-target/))
+
+それでも SMB を採った理由は [design.md の「バックアップ」](../design.md#バックアップ)にある。
+要点は、DS923+ の SMB 共有が既にあり、S3 互換にすると Synology 側に MinIO 相当を建てることになる点である。
+バックアップの置き場が、別に運用するサービスの可用性に依存する形を避けた。
+
+### 設定は宣言的に置ける
+
+UI からも設定できるが、Helm の values で持てる。
+
+```yaml
+defaultBackupStore:
+  backupTarget: cifs://<host>/<share>
+  backupTargetCredentialSecret: cifs-secret
+```
+
+資格情報は `CIFS_USERNAME` と `CIFS_PASSWORD` を持つ Secret である。
+SOPS で暗号化して Git に置ける。
+
+**取れていることと戻せることは別である。**
+`RecurringJob` を置いたら、復元を1回通す。
+
 ## フェーズ2で変えるもの
 
 `defaultReplicaCount` は 1 にしてある。
