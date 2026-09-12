@@ -1,7 +1,21 @@
 # cloudflared と external-dns もこの namespace に入る。
 # 3つのアプリで共有するため、Gateway 側で作って他は dependsOn で待つ。
+#
+# **Pod Security を restricted まで上げる。**
+# Talos の既定は baseline で、root 実行・書き込み可能な rootfs・seccomp 無し・
+# allowPrivilegeEscalation・既定 capability を通す。
+# ここはインターネットからの通信を終端する唯一の namespace であり、
+# cloudflared を固めてあるのは Deployment に書いてあるだけで強制はされていない。
+# チャートの更新やアプリの追加で黙って緩むのを止める。
+#
+# 既存の Pod が restricted を満たすことは R9 で確認済みである
+# （kubectl label --dry-run=server が警告を出さない）。
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
   name: network
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
