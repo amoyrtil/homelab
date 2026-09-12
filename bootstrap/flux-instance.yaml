@@ -29,11 +29,12 @@ spec:
     # リポジトリが public のため認証は要らない。private に変えるとき、または
     # オーガナイゼーションへ移すときは、Secret を作って pullSecret で指す。
     # 手順は docs/knowledge/flux-bootstrap.md にある。
-  # flux-operator が生成する入口の Kustomization にパッチを当てる。
-  # 既定では復号の設定が付かず、kubernetes/flux/cluster に置いた
-  # cluster-secrets が平文にならないまま配下へ渡らない。
+  # flux-operator が生成するマニフェストにパッチを当てる。
   kustomize:
     patches:
+      # 入口の Kustomization に復号の設定を足す。
+      # 既定では付かず、kubernetes/flux/cluster に置いた cluster-secrets が
+      # 平文にならないまま配下へ渡らない。
       - target:
           kind: Kustomization
         patch: |
@@ -43,3 +44,25 @@ spec:
               provider: sops
               secretRef:
                 name: sops-age
+
+      # flux-system namespace に公開許可のラベルを付ける。
+      # external Gateway の allowedRoutes が Selector になっており、
+      # このラベルを持つ namespace からの HTTPRoute しか受け付けない。
+      # Webhook Receiver がここにいるため、無いと GitHub の push が届かない。
+      #
+      # **kubectl label では持たない。**
+      # flux-operator はこの Namespace を自分の inventory に持っており
+      # （status.inventory に _flux-system__Namespace がある）、reconcile の
+      # たびに自分の desired state を適用して余所のラベルを剥ぐ。
+      # 手で付けたラベルは数時間で消え、その時点で external-dns が
+      # ルートの外れたレコードとして CNAME と TXT を削除する。
+      # 症状は公開 URL が引けなくなることで、クラスター側は全部 True のままである。
+      #
+      # ここに書くと flux-operator 自身が維持するため剥がれない。
+      - target:
+          kind: Namespace
+          name: flux-system
+        patch: |
+          - op: add
+            path: /metadata/labels/homelab~1expose
+            value: "true"
