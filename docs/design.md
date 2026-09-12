@@ -472,6 +472,7 @@ homelab のためだけに存在するリソースか、VLAN のように同じ�
 | Tunnel の ingress ルール | クラスターの ConfigMap。Flux が反映する |
 | クラスター内のリソース | Flux |
 | UniFi の WLAN（SSID） | UI。投入は[構築の作業](plan.md#構築の作業)にある |
+| UniFi の mDNS リフレクタ | UI。値は[必要な設定](#必要な設定)にある。provider の `multicast_dns` が UCG-Fiber で書けるかは未検証 |
 | UniFi のポートプロファイル、Local DNS Records | UI |
 | Cloudflare の apex と MX、各種の検証レコード、WAF | UI |
 | Cloudflare と UniFi の API トークン | 手で発行する。手順は `terraform/secrets.example.env` |

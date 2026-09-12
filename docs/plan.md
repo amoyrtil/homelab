@@ -530,7 +530,7 @@ GitHub の設定を実際に引いて確認している。
 - [ ] `metrics-server` と `csi-driver-smb` を入れる（リハーサルで扱っておらず、`kubernetes/apps/` に無い）
 - [ ] 公開する namespace に `homelab/expose: "true"` を付ける規約を運用に乗せる
 - [ ] DS923+ を VLAN 20 に載せ、Longhorn の backupstore 用の SMB 共有を作る
-- [ ] `cifs-secret` を SOPS で作り、Longhorn の `defaultBackupStore` を設定する
+- [ ] `cifs-secret` を SOPS で作り、Longhorn の `defaultBackupStore` を設定する（`longhorn/ks.yaml` に `decryption` を戻す必要がある）
 - [ ] `RecurringJob` を置き、復元を1回試す（取れているだけでは確かめたことにならない）
 - [ ] クラスター外に Backup DNS を構築する
 - [ ] Pi-hole をクラスター上へ移設する

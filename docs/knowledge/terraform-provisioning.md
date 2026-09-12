@@ -399,7 +399,8 @@ state を置く器を state で管理すると、壊したときに足場がな�
 ## Tunnel の回収
 
 Tunnel の名前は `blackwall` である。
-UUID は `mise run terraform cloudflare output tunnel_id` で確認できる。
+UUID は `mise run terraform cloudflare output -raw tunnel_id` で確認できる。
+output に `sensitive` を立てているため、`-raw` が要る。
 `config_src` に `local` を指定し、`cloudflare_zero_trust_tunnel_cloudflared_config` は作らない。
 ingress ルールはクラスターの ConfigMap が持ち、Flux が反映する。
 `_config` を作ると Zero Trust ダッシュボード側にも設定が生まれ、所有者が2つになる。
@@ -430,7 +431,7 @@ mise から外し、`~/.cloudflared` も消した。
 | 用途 | 代替 |
 | --- | --- |
 | Tunnel の作成 | `cloudflare_zero_trust_tunnel_cloudflared` |
-| UUID の確認 | `mise run terraform cloudflare output tunnel_id` |
+| UUID の確認 | `mise run terraform cloudflare output -raw tunnel_id` |
 | コネクション数の確認 | API の `/accounts/<account_id>/cfd_tunnel/<tunnel_id>` |
 
 資格情報は失われない。
@@ -443,6 +444,10 @@ mise から外し、`~/.cloudflared` も消した。
 | `apply` | `1 imported, 0 added, 0 changed, 0 destroyed` |
 | 直後の `plan` | `No changes` |
 | トンネルのコネクション | 4本を維持（`nrt09` `nrt12` `nrt14` `nrt15`） |
+
+**接続先の colo は計測のたびに変わる。**
+R7 の記録（[gateway-and-tunnel.md](gateway-and-tunnel.md)）は `nrt10` から始まっており、こちらは `nrt09` である。
+再接続で割り当てが変わるだけで、どちらも正しい。本数が4本であることだけが意味を持つ。
 | cloudflared の Pod | 再起動なし。再接続のログもなし |
 | R2 の state | 誤ったパスフレーズで `cipher: message authentication failed`。保管時に暗号化されている |
 | 公開 URL | Cloudflare Edge からオリジンまで到達。HTTP から HTTPS へ `301` |

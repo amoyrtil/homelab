@@ -15,7 +15,5 @@ spec:
     # 入口の Kustomization を flux-system という名前で作る。
     kind: GitRepository
     name: flux-system
-  decryption:
-    provider: sops
-    secretRef:
-      name: sops-age
+  # decryption は置いていない。app/ に暗号化ファイルが無いためである。
+  # フェーズ1で backupstore の cifs-secret を足すときに要る。
