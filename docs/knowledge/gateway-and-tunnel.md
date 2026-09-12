@@ -55,13 +55,59 @@ allowedRoutes:
 internal は `All` のままでよい。
 宅内からの到達は塞ぐ対象ではなく、`HTTPRoute` を書いたなら繋がってよい。
 
-**`flux-system` にはラベルを手で付ける。**
-この namespace は flux-operator の管理下にあり、Flux のマニフェストから同じ namespace を宣言すると `prune` で消しに行く経路ができる。
-bootstrap の手順に入れてある（[cluster-bootstrap-order.md](cluster-bootstrap-order.md)）。
+**`flux-system` のラベルは `FluxInstance` の patch で付ける。**
 
-付け忘れの症状は「壊れない」ことである。
-Webhook Receiver が external に繋がらず、GitHub の push が届かなくなるが、Flux は1時間の間隔で同期し続ける。
-反映が遅いことにしか気付けない。
+```yaml
+# bootstrap/flux-instance.yaml
+kustomize:
+  patches:
+    - target:
+        kind: Namespace
+        name: flux-system
+      patch: |
+        - op: add
+          path: /metadata/labels/homelab~1expose
+          value: "true"
+```
+
+`~1` は JSON Pointer における `/` のエスケープである。
+`homelab/expose` をそのまま書くと階層として解釈される。
+
+### ラベルを手で付けると剥がれる
+
+最初は `kubectl label` で付けた。**6時間ほどで消え、公開 URL が落ちた。**
+
+`flux-system` Namespace は flux-operator が自分の inventory に持っている。
+
+```console
+$ kubectl -n flux-system get fluxinstance flux -o json \
+    | jq -r '.status.inventory.entries[].id' | grep -i namespace
+_flux-system__Namespace
+```
+
+reconcile のたびに自分の desired state を Apply するため、余所が付けたラベルは落ちる。
+実際、Namespace の field manager は `flux-operator / Apply` の1つだけである。
+
+**症状は「壊れない」ことである。**
+クラスター側は何も落ちない。`HTTPRoute` は external に対して `Accepted: True` のままで、Kustomization も全部 `True` だった。
+落ちたのは公開 DNS のほうである。
+
+```
+external-dns: Changing record. action=DELETE record=flux-webhook.<domain> type=CNAME
+external-dns: Changing record. action=DELETE record=k8s.cname-flux-webhook.<domain> type=TXT
+（以降ずっと）All records are already up to date
+```
+
+**external-dns は `allowedRoutes` を自分で評価する。**
+Gateway API の `status` が `Accepted: True` でも、external-dns 側が namespace のラベルを見て「繋がっていない」と判断すれば、`policy: sync` がレコードを消す。
+そして一度消したあとは「up to date」と言い続ける。
+
+切り分けは external-dns のログを見るのが速い。
+`action=DELETE` が出ていれば、クラスターではなくレコードの側の問題である。
+Pod の再起動では直らない（キャッシュではなく判定だから）。
+
+なお、消えた直後に手元から引くと [NXDOMAIN のネガティブキャッシュ](#未回収)を踏む。
+復旧の確認は `dig @1.1.1.1` と `curl --resolve` で行う。
 
 listener の構成は2本で違う。
 internal は宅内からの経路であり、Cloudflare を通らないため Gateway 自身が TLS を終端する。

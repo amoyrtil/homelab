@@ -49,6 +49,8 @@ homelab の構築過程で行った検証と、そこで得た知見の置き場
 - **CI は SOPS の鍵を持たずにマニフェストを検証できる。** `encrypted_regex` が値だけを暗号化するため `kustomize build` が通る。ただし `${SECRET_*}` の未置換と Secret の `sops` キーで偽陽性が出るので、置換と `-skip Secret` が要る。
 - **Longhorn をワーカーに限定するのに `nodeSelector` は要らない。** チャートの `taintToleration` が既定で空であり、コントロールプレーンの taint を許容しないためである。
 - **flux-operator は `FluxInstance` の名前によらず `flux-system` という名前で GitRepository を作る。** `sourceRef` はそちらを指す。
+- **`flux-system` namespace に手でラベルを付けても剥がれる。** flux-operator が Namespace を自分の inventory に持ち、reconcile のたびに自分の desired state を Apply する。`FluxInstance` の `kustomize.patches` で当てる。
+- **external-dns は `allowedRoutes` を自分で評価する。** Gateway API の status が `Accepted: True` でも、external-dns が namespace のラベルを見て繋がっていないと判断すれば `policy: sync` がレコードを消す。消したあとは「up to date」と言い続け、Pod を再起動しても戻らない。
 - **Kubernetes の Secret は `encrypted_regex: ^(data|stringData)$` で暗号化する。** ファイル全体を暗号化すると `kind` まで隠れ、kustomize がリソースとして読めない。
 - **手でクラスターに入れる鍵は `sops-age` の1つだけ。** リポジトリが public のため Git 認証が要らない。private 化やオーガナイゼーション移行のときに2つ目が要る。
 - **クラスターを立てる順序は4箇所で入れ替えられない。** `cniConfig: none` は構築時にしか効かず、Gateway API の CRD は Cilium より先、Cilium は flux-operator より先、`sops-age` は `FluxInstance` より先である。

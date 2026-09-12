@@ -48,9 +48,8 @@ Flux の `Receiver` が `flux-system` にあり、GitHub の push をトンネ�
 | `sops-age` Secret | 外。secret zero |
 | `FluxInstance` | 外。Flux 自身 |
 
-加えて `flux-system` に `homelab/expose=true` のラベルを付ける。
-external Gateway の `allowedRoutes` が `Selector` になったため要る（R9）。
-この namespace は flux-operator の管理下にあり、Flux のマニフェストから宣言すると `prune` で消しに行く経路ができるため、手で付ける。
+`flux-system` への `homelab/expose=true` ラベルは、`FluxInstance` の `kustomize.patches` が当てる。
+手で付けると flux-operator の reconcile で剥がれ、公開 DNS のレコードが消える（[knowledge/gateway-and-tunnel.md](knowledge/gateway-and-tunnel.md#ラベルを手で付けると剥がれる)）。
 
 **LB プールと BGP の4リソースは Flux に移せる。**
 Cilium が動いたあとの通常の CR であり、Flux が Git を pull するのに LoadBalancer IP は要らない。
