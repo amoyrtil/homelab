@@ -38,7 +38,7 @@ homelab の構築過程で行った検証と、そこで得た知見の置き場
 - **MS-03 の NIC は4つとも Talos が認識する。** RTL8127 も `r8169` が掴む。一方 NPU は `intel_vpu` の probe が失敗し、デバイスノードが作られない。
 - **`onedr0p/cluster-template` はジェネレーターとしては採用しない。** ディレクトリ規約、Flux Operator 方式、helmfile ブートストラップ、mise のバージョン固定だけを借りる。
 - **LoadBalancer IP Pool をノードと同じ VLAN に置いたまま BGP へは移せない。** BGP は経路を広告するだけで ARP に応答しないため、同一 VLAN の機器は ARP 解決に失敗して届かなくなる。LB Pool 専用に VLAN 120（物理 VLAN の番号 + 100）を切る。
-- **同じ URL で LAN 内とインターネットの両方から届く。** external-dns 2系統による split-horizon DNS で成立する。ただし LAN 内のクライアントが DoH などで内部 DNS を迂回しないことが前提になる。
+- **同じ URL で LAN 内とインターネットの両方から届く。** external-dns 2系統による split-horizon DNS で成立する。ただし DoH を使うクライアントは内部 DNS を迂回し、Cloudflare 経由になる。**遮断は見送った。** UniFi でやる唯一の口が BLOCK のポリシーであり、許可だけで書くという ZBF の前提を壊すためである。
 - **UniFi の Zone-Based Firewall は宛先ネットワークでゾーンを決める。** BGP で学習した `/32` は、next-hop が別 VLAN にあっても、アドレスの属する VLAN のゾーンに入る。LB IP のアクセス制御を VLAN 120 のゾーンポリシーで書ける。
 - **`bgp listen range` は UniFi に通る。** UCG-Fiber 側にノード IP を列挙する必要はなく、ノードを増やしてもルーターの設定は変えずに済む。
 - **Cilium はカプセル化しない構成にできる。** ノードが全台 VLAN 20 の同一 L2 にいるため `routingMode: native` と `autoDirectNodeRoutes` が使える。既定の VXLAN では経路の実効 MTU が 1450 に落ちる。稼働中に変えるとデータプレーンが途切れるので、クラスターを組むときに入れる。
@@ -68,4 +68,4 @@ homelab の構築過程で行った検証と、そこで得た知見の置き場
 - **cloudflared の :2000 は `/config` を無認証で返す。** 公開しているホスト名と backend の Service 名が読める。ingress を書いて kubelet だけに絞る。
 - **flux-operator の `allow-webhooks` は Gateway 経由の要求を落とす。** ingress の `from` を `namespaceSelector` に限っており、Cilium から見て world の identity を持つ要求が当たらない。`from` を書かない NetworkPolicy を1つ足す。
 - **DNS レコードを作った直後の確認は NXDOMAIN のネガティブキャッシュを踏む。** Cloudflare の SOA は最小 TTL が 1800 秒であり、external-dns の同期より先に引くと最大 30 分そのまま返る。
-- **リポジトリを移すと4箇所が黙って効かなくなる。** `FluxInstance` の `sync.url`、GitHub の webhook、自動承認のワークフロー、docs 内の URL である。
+- **リポジトリを移すと5箇所が黙って効かなくなる。** `FluxInstance` の `sync.url`、GitHub の webhook、自動承認のワークフロー、`CODEOWNERS`、`terraform/*/variables.tf` の「public であるため」という理由である。**自動承認が止まるとマージができなくなる。** `main` は承認1件を必須にしており `enforce_admins` も立っている。

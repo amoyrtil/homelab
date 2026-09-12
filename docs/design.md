@@ -207,6 +207,15 @@ VLAN 1 には機器を収容しない方針だが、いま作業端末がそこ�
 拒否のポリシーを1本足したくなったときは、それが既存の許可と重ならないことを確かめる。
 重なるなら、そのポリシーは Terraform に置けない。
 
+**実際に1本、この条件に当たって見送ったものがある。**
+DoH エンドポイントの遮断である。
+Trusted / Untrusted / Management → External に BLOCK を置くことになり、同じゾーンペアの #5・#8・#9 と完全に重なる。
+R9 で見送りを決めた（[knowledge/service-exposure.md](knowledge/service-exposure.md#成立の条件)）。
+
+条件に当たるものが今後も出る。
+そのときは「Terraform から外して UI に置く」か「機能を見送る」かを選ぶ。
+**中身をコードに置いて順序を UI に残す形は採らない。** 1つの関心事の所有者が2つになる。
+
 ### BGP
 
 Cilium が払い出した LoadBalancer IP を、UCG-Fiber に `/32` で広告する。
@@ -389,7 +398,7 @@ Talos の kubelet はコンテナで動くため、これがないと CSI が作
 
 **Talos の拡張は要らない。**
 `mount.cifs` と `cifs.upcall` は `longhorn-manager` のイメージに入っており、`cifs` は Talos のカーネルが持つ。
-csi-driver-smb について design.md が書いている「`mount.cifs` はドライバ Pod 内で動く」と同じ理屈である。
+[ストレージ](#ストレージ)の表で csi-driver-smb に拡張が要らないとしているのと同じ理屈である。
 R9 で実機に確かめた。
 
 **Longhorn 自身は S3 を推奨している。**
@@ -397,9 +406,17 @@ R9 で実機に確かめた。
 > Saving to an object store such as S3 is preferable because it generally offers better reliability.
 > Another advantage is that you do not need to mount and unmount the target, which can complicate failover and upgrades.
 
-それでも SMB を採るのは、DS923+ の SMB 共有が既にあり、これを使えば新しい構成要素が増えないためである。
-S3 互換にするには Synology 側に MinIO 相当を建てることになり、**バックアップの置き場が別のサービスの可用性に依存する**。
-メディアの層で既に SMB を使っており、プロトコルも揃う。
+それでも SMB を採るのは、**復元を宅内で完結させる**ためである。
+DS923+ の SMB 共有が既にあり、メディアの層でも同じプロトコルを使っている。
+NVMe が1本飛んだときに、インターネットの疎通にも外部サービスにも依存せずに戻せる。
+
+S3 互換そのものを避けているわけではない。
+Terraform の state は Cloudflare R2（S3 互換）に置いており、口は既にある。
+宅内で S3 互換を用意するなら Synology 側に MinIO 相当を建てることになり、
+**バックアップの置き場が別に運用するサービスの可用性に依存する**。それを避けた。
+
+宅外へのバックアップは別の話であり、必要になったら backupstore を足す。
+Longhorn は backupstore を複数持てるため、後から足すのは作り直しにならない。
 
 マウントの着脱が問題になるのは、backupstore が落ちたときに Longhorn の動作へ波及する場合である。
 バックアップが取れないこととボリュームが使えないことは切り分けて監視する。
@@ -443,23 +460,27 @@ homelab のためだけに存在するリソースか、VLAN のように同じ�
 それでも載せられるのは、[ポリシー](#ポリシー)を許可だけで構成し、評価順に意味を持たせないためである。
 条件と、それを壊さないための制約は[評価順に依存させない](#評価順に依存させない)にある。
 
-スイッチのポートプロファイルは対象外のまま残す。
-宅内のスイッチの設定であって homelab に固有ではなく、数も増えない。
-
 **載せないものにも所有者を書く。**
 所有者の空欄は、誰も投入しないまま残る原因になる。
 
 | リソース | 所有者 |
 | --- | --- |
 | UniFi の VLAN、BGP、ファイアウォールのゾーンとポリシー | Terraform |
-| Cloudflare のゾーン設定、Tunnel、API トークン、Access のアプリとポリシー | Terraform |
+| Cloudflare のゾーン設定、Tunnel、Access のアプリとポリシー | Terraform |
 | Cloudflare のサービス用 DNS レコード | external-dns（Cloudflare 系統） |
 | 内部 DNS のサービス用レコード | external-dns（Pi-hole 系統） |
 | Tunnel の ingress ルール | クラスターの ConfigMap。Flux が反映する |
 | クラスター内のリソース | Flux |
-| UniFi のポートプロファイル、WLAN、Local DNS Records | UI |
+| UniFi の WLAN（SSID） | UI。投入は[構築の作業](plan.md#構築の作業)にある |
+| UniFi のポートプロファイル、Local DNS Records | UI |
 | Cloudflare の apex と MX、各種の検証レコード、WAF | UI |
+| Cloudflare と UniFi の API トークン | 手で発行する。手順は `terraform/secrets.example.env` |
 | Terraform の state を置く R2 バケット | 手で作る。コードの管理対象に入れない |
+
+**所有者を書くだけでは足りない。**
+R9 で、ZBF が「UI が所有する」と決まったまま投入がどの作業リストにも無い状態になっていたことが分かった。
+WLAN も同じ形で残っていた。
+UI 所有にしたものは、**投入する作業を [plan.md](plan.md) に立てるところまでを1組にする。**
 
 DNS レコードの所有者が重なると、external-dns は TXT レジストリにない他人のレコードを管理外と見なして消しに行く。
 Terraform が持てるのは apex や MX、各種の検証レコードのように external-dns が触らないものだけである。
@@ -468,9 +489,17 @@ Tunnel は Terraform だけが持つ。
 `cloudflared` の CLI は使わない。作成も更新も Terraform から行い、CLI を残すと所有権の境界を崩す経路が1本残る。
 資格情報はクラスターの `cloudflared-credentials` にあり、作り直すときはそこから `credentials.json` を組み立てる。
 
-Cloudflare の API トークンも用途で分ける。
-cert-manager と external-dns のランタイム用には `Zone:DNS:Edit` と `Zone:Zone:Read` を与える。
-Terraform 用には Tunnel を作るための `Account:Cloudflare Tunnel:Write` を含む別のトークンを与える。
+Cloudflare の API トークンは用途で分ける。
+ランタイム用には `Zone:DNS:Edit` と `Zone:Zone:Read` を、Terraform 用には Tunnel を作るための `Account:Cloudflare Tunnel:Write` を含む別のトークンを与える。
+
+**トークンは Terraform で作らない。**
+Terraform 自身が使うトークンを Terraform で作ることはできず（secret zero と同じ形）、ランタイム用も UI で発行している。
+発行手順は `terraform/secrets.example.env` にある。
+
+**ランタイム用は cert-manager と external-dns で同じ値を使っている。**
+Cloudflare の API トークンはレコード名の単位まで絞れず、どちらも `Zone:DNS:Edit` を要求するため、分けても最小権限の利得がない。
+得られるのは「片方が漏れてももう片方を巻き込まない」「片方だけ Roll できる」という分離だけである。
+Roll するときに2本発行するなら追加コストがないので、そのときに分ける。
 
 ### フェーズ1で入れるコンポーネント
 
@@ -481,7 +510,7 @@ Terraform 用には Tunnel を作るための `Account:Cloudflare Tunnel:Write` 
 | kube-system | metrics-server | `kubectl top`、HPA |
 | cert-manager | cert-manager | Let's Encrypt、DNS-01 チャレンジに Cloudflare |
 | flux-system | flux-operator、flux-instance | GitOps と Webhook Receiver |
-| network | cloudflare-tunnel | 外部公開 |
+| network | cloudflared | 外部公開 |
 | network | external-dns（Cloudflare） | 公開 DNS レコード |
 | network | external-dns（Pi-hole） | 内部 DNS レコード |
 | longhorn-system | longhorn | ブロックストレージ。backupstore は DS923+ の SMB |

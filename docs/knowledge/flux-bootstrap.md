@@ -95,6 +95,29 @@ SOPS_AGE_KEY_FILE=~/.config/sops/age/backup.agekey \
 家庭のオーガナイゼーションへ移したあとは、この2本目を別の人の鍵にする道もある。
 同じ手順で recipient を足すだけであり、いま作ったバックアップ鍵と併存できる。
 
+### 鍵は用途で分けていない
+
+`.sops.yaml` は path_regex で3つのルールに分かれているが、**recipient は3つとも同じ2本**である。
+クラスターの `sops-age` が持つのは主鍵であり、それは `terraform/secrets.sops.env` と `talos/talsecret.sops.yaml` の recipient にも入っている。
+
+**つまり `flux-system` の Secret を読める経路が1本できた時点で、Terraform の資格情報と Talos の CA が開く。**
+`terraform/secrets.sops.env` には Cloudflare の API トークン、UniFi の API キー、R2 のアクセスキー、state のパスフレーズが入っている。
+クラスター内の1事故が、ルーターの管理 API と Cloudflare のアカウントにまで届く。
+
+分けるのは難しくない。
+クラスターが復号する必要があるのは `kubernetes/**` だけなので（`FluxInstance` の `sync.path` が `kubernetes/flux/cluster`）、
+`talos/**` と `*.sops.env` を別の鍵にして `updatekeys` を回せばよい。
+
+**それでも R9 では分けないことにした。**
+いま `flux-system` の Secret を読める相手は自分だけであり、その相手は作業端末の `keys.txt` も持っている。
+分離が効くのは「クラスターは侵害されたが作業端末は無事」という場合に限られる。
+1人運用でその筋を引くより、鍵の本数を増やさないほうを採った。
+
+**判断が変わる条件を書いておく。**
+クラスターに自分以外の人や、外から来たワークロードが載ったときである。
+家庭のオーガナイゼーションに移して別の人が触るようになったら、そこで分ける。
+手順は上の `updatekeys` と同じで、`.sops.yaml` の recipient を2行変えるだけである。
+
 ## 公開したものは private 化しても取り消せない
 
 リポジトリはここまで public であり、暗号化済みの7ファイルは誰でも取得できた。
@@ -119,7 +142,7 @@ API トークンも同じ回で Roll する。追加のコストがほとんど�
 | 対象 | 手段 |
 | --- | --- |
 | `talsecret.sops.yaml` | `talhelper gensecret` で作り直す。クラスターの再構築が前提 |
-| Cloudflare の API トークン3種 | ダッシュボードで Roll する。値だけが変わり、権限は継がれる |
+| Cloudflare の API トークン2種 | ダッシュボードで Roll する。値だけが変わり、権限は継がれる。**cert-manager と external-dns は同じ値を使っている**ため、暗号化ファイルは2つあるがトークンは1本である。3本ある前提で回すと片方が古い値のまま残る |
 | UniFi の API キー | Terraform 専用の管理者から再発行する |
 | Tunnel の secret | Tunnel を作り直すか、`credentials.json` を再生成する |
 | R2 の資格情報 | 新しいトークンを発行し、古いものを失効させる |
@@ -164,10 +187,13 @@ kustomize build "$dir" \
 Terraform 側は `init -backend=false` で回す。
 R2 の資格情報を CI に置かずに、provider のスキーマだけを取って構文と型を見られる。
 
-**Renovate は bootstrap 層を拾えない。**
-Cilium、flux-operator、Gateway API CRD のバージョンは、いまどのファイルにも無く、
+**Renovate は bootstrap 層の一部を拾えない。**
+Cilium と flux-operator のバージョンは、いまどのファイルにも無く、
 [cluster-bootstrap-order.md](cluster-bootstrap-order.md) の `helm install` 行にしか出てこない。
 helmfile へ移せば、そのまま Renovate の対象になる。
+
+Gateway API の CRD だけは拾える。
+`kubectl apply` の URL にバージョンが入っており、`.github/renovate.json5` の customManager がそこを見ている。
 
 ## GitRepository の名前は FluxInstance の名前と一致しない
 
@@ -267,6 +293,9 @@ Helm の `defaultSettings.defaultReplicaCount: 1` を渡すと両方に反映さ
 
 ```
 bootstrap/
+  cilium-values.yaml            Cilium の Helm values
+  cilium-networks.yaml          CiliumLoadBalancerIPPool
+  cilium-bgp.yaml               BGP の3リソース
   flux-instance.yaml            FluxInstance。Flux 自身は Flux で管理できない
 kubernetes/
   flux/cluster/
@@ -309,10 +338,14 @@ SOPS の復号設定は、共有の kustomize component を挟まず各 `ks.yaml
 | GitHub の webhook | hook はリポジトリごとに持つため、移動先で作り直す。`Receiver` のパスは変わらないので URL は同じでよい |
 | `.github/workflows/approve-pr-from-owner.yaml` | `github.repository_owner` と PR 作成者の login を比較している。オーガナイゼーションへ移すと両者が一致しなくなり、自動承認が止まる |
 | `.github/CODEOWNERS` | `@amoyrtil` のままでは org のレビュー割り当てに載らない。チームに変える |
-| `terraform/*/variables.tf` と `.mise/tasks/terraform` | 「リポジトリが public であるため Git には置かない」という理由が5箇所ある。private 化すると理由が偽になる。値を Git に置かない判断は維持し、理由だけを書き換える |
+| `terraform/cloudflare/variables.tf`（3箇所）と `terraform/unifi/variables.tf`（1箇所） | 「リポジトリが public であるため Git には置かない」という理由。private 化すると理由が偽になる。値を Git に置かない判断は維持し、理由だけを書き換える |
+| `bootstrap/flux-instance.yaml` | 「リポジトリが public のため認証は要らない」。`sync.pullSecret` を足すときに一緒に直す |
 
 リポジトリの URL を持つのは `bootstrap/flux-instance.yaml` の `sync.url` だけである。
 `docs/` 本文には無い。
+
+**`.mise/tasks/terraform` に「public であるため」は書かれていない。**
+あのスクリプトが閉じ込めているのは AWS の名前と state の置き場のアカウント ID であり、理由は public / private と無関係に成り立つ。書き換える必要がない。
 
 private にする場合は、これに加えて Git 認証用の Secret を作り、`sync.pullSecret` で指す。
 手でクラスターに入れる鍵が `sops-age` の1つで済まなくなり、2つ目が増える。
