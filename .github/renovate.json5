@@ -34,25 +34,45 @@
     managerFilePatterns: ["/kubernetes/.+\\.ya?ml$/", "/bootstrap/.+\\.ya?ml$/"],
   },
 
+  // インターネットの入口である cloudflared のイメージをダイジェストで固定する。
+  // 手書きのイメージはこれ1つだけである。Helm チャートが内部で参照する
+  // イメージまでは追わない。そちらは Flux がチャートを検証している。
+  docker: {
+    pinDigests: true,
+  },
+
   // talconfig.yaml のバージョンは talhelper 固有の書き方であり、
   // 既製のマネージャーが拾わない。正規表現で拾う。
+  //
+  // **Talos と Kubernetes は別の customManager に分ける。**
+  // 1つにまとめて packageRules で depName を振り分ける書き方は通らない。
+  // depNameTemplate も matchStrings も packageRules では使えず、
+  // renovate-config-validator が警告を出したうえでルールごと無視される。
+  // 無視されると kubernetesVersion が siderolabs/talos のリリースと比較され、
+  // v1.37.0 のほうが大きいので更新が永久に提案されなくなる。
   customManagers: [
     {
       customType: "regex",
-      description: "talconfig.yaml の Talos と Kubernetes",
+      description: "talconfig.yaml の talosVersion",
       managerFilePatterns: ["/talos/talconfig\\.yaml$/"],
-      matchStrings: [
-        "talosVersion:\\s*(?<currentValue>v\\S+)",
-        "kubernetesVersion:\\s*(?<currentValue>v\\S+)",
-      ],
+      matchStrings: ["talosVersion:\\s*(?<currentValue>v\\S+)"],
       datasourceTemplate: "github-releases",
       depNameTemplate: "siderolabs/talos",
       versioningTemplate: "semver",
     },
     {
       customType: "regex",
-      description: "design.md と knowledge/ に書いた Gateway API CRD のバージョン",
-      managerFilePatterns: ["/docs/.+\\.md$/"],
+      description: "talconfig.yaml の kubernetesVersion",
+      managerFilePatterns: ["/talos/talconfig\\.yaml$/"],
+      matchStrings: ["kubernetesVersion:\\s*(?<currentValue>v\\S+)"],
+      datasourceTemplate: "github-releases",
+      depNameTemplate: "kubernetes/kubernetes",
+      versioningTemplate: "semver",
+    },
+    {
+      customType: "regex",
+      description: "knowledge/cluster-bootstrap-order.md の Gateway API CRD",
+      managerFilePatterns: ["/docs/knowledge/cluster-bootstrap-order\\.md$/"],
       matchStrings: [
         "gateway-api/releases/download/(?<currentValue>v\\S+?)/experimental-install\\.yaml",
       ],
@@ -62,13 +82,6 @@
   ],
 
   packageRules: [
-    {
-      description: "talconfig.yaml の kubernetesVersion は Talos とは別に追う",
-      matchManagers: ["custom.regex"],
-      matchFileNames: ["talos/talconfig.yaml"],
-      matchStrings: ["kubernetesVersion"],
-      depNameTemplate: "kubernetes/kubernetes",
-    },
     {
       description: "パッチは自動マージの候補にしない。homelab では人が見る",
       matchUpdateTypes: ["patch"],

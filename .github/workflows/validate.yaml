@@ -30,6 +30,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          # 追加されたファイルを base と比べるため、浅いクローンにしない。
+          fetch-depth: 0
 
       - uses: jdx/mise-action@v3
         with:
@@ -47,6 +50,30 @@ jobs:
               echo "FAIL"; echo "$out" | sed 's/^/    /'; fail=1
             fi
           done < <(find kubernetes -name kustomization.yaml -exec dirname {} \; | sort)
+          exit $fail
+
+      - name: アプリが kubernetes/apps/kustomization.yaml に並んでいるか
+        # 足し忘れても kustomize build も kubeconform も通り、Flux の
+        # Kustomization も全部 True のまま、そのアプリだけがクラスターに
+        # 存在しない。「壊れない」種類の失敗なので、ここで拾う。
+        run: |
+          set -euo pipefail
+          fail=0
+          while IFS= read -r ks; do
+            rel="${ks#kubernetes/apps/}"
+            if ! grep -qF "  - ${rel}" kubernetes/apps/kustomization.yaml; then
+              echo "::error file=$ks::kubernetes/apps/kustomization.yaml に並んでいない。足さないとクラスターに入らない" >&2
+              fail=1
+            fi
+          done < <(find kubernetes/apps -mindepth 3 -name ks.yaml | sort)
+
+          # 逆向きも見る。消したのに列挙が残っていると Flux が取得に失敗する。
+          while IFS= read -r listed; do
+            [ -f "kubernetes/apps/${listed}" ] || {
+              echo "::error file=kubernetes/apps/kustomization.yaml::${listed} が存在しない" >&2
+              fail=1
+            }
+          done < <(grep -oE '^  - \S+' kubernetes/apps/kustomization.yaml | sed 's/^  - //')
           exit $fail
 
       - name: kubeconform でスキーマを検証する
@@ -78,25 +105,62 @@ jobs:
           done < <(find kubernetes -name kustomization.yaml -exec dirname {} \; | sort)
           exit $fail
 
-      - name: external Gateway に繋がった HTTPRoute の backend を並べる
+      - name: 公開した HTTPRoute の backend が cloudflared の egress に載っているか
         # cloudflared の egress ポリシーは、公開する HTTPRoute の backend を
         # 列挙する形で書いてある（knowledge/gateway-and-tunnel.md）。
         # external に足したのに egress へ足し忘れると 403 になる。
-        # 機械的な突き合わせは Service から Pod ラベルを解決する必要があり、
-        # 静的には決まらない。ここでは一覧を出すに留め、目視の手がかりにする。
+        #
+        # backend の Service 名（webhook-receiver）と egress が使う Pod の
+        # ラベル（app: notification-controller）は別物であり、Service を
+        # 解決しないと突き合わせられない。静的には決まらない。
+        #
+        # 決まるのは「同じ PR で両方を触ったか」である。external に繋がる
+        # HTTPRoute が**追加**されたのに networkpolicy.yaml が変わっていない
+        # PR を落とす。既存ルートの編集では鳴らない。
         run: |
           set -euo pipefail
+
+          # parentRefs ブロックの中だけを見る。ブロックは次の同階層のキーで終わる。
+          attaches_external() {
+            awk '
+              match($0, /^[[:space:]]*parentRefs:[[:space:]]*$/) { ind = match($0, /[^ ]/); f = 1; next }
+              f && /^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*:/ && match($0, /[^ ]/) <= ind { f = 0 }
+              f && /name:[[:space:]]*external[[:space:]]*$/ { found = 1 }
+              END { exit !found }
+            ' "$1"
+          }
+
           echo "external Gateway に繋がった HTTPRoute:"
-          grep -rl 'kind: HTTPRoute' kubernetes/ | while IFS= read -r f; do
-            if grep -A3 'parentRefs:' "$f" | grep -q 'name: external'; then
+          external_routes=""
+          while IFS= read -r f; do
+            if attaches_external "$f"; then
+              external_routes="${external_routes}${f}"$'\n'
               echo "  $f"
-              grep -A2 'backendRefs:' "$f" | sed 's/^/    /'
+              sed -n '/backendRefs:/,/^[^ ]/p' "$f" | grep -E 'name:|port:' | sed 's/^/    /'
             fi
-          done
+          done < <(grep -rl 'kind: HTTPRoute' kubernetes/)
+          [ -n "$external_routes" ] || { echo "  ERROR: 1件も検出できなかった。検出のしかたが壊れている" >&2; exit 1; }
+
           echo
           echo "cloudflared の egress で許可している backend:"
           sed -n '/egress:/,$p' kubernetes/apps/network/cloudflared/app/networkpolicy.yaml \
             | grep -E 'io.kubernetes.pod.namespace|app:|port:' | sed 's/^/  /'
+
+          [ "${GITHUB_BASE_REF:-}" ] || exit 0
+
+          echo
+          added=$(git diff --name-only --diff-filter=A "origin/${GITHUB_BASE_REF}...HEAD" -- 'kubernetes/**' || true)
+          changed=$(git diff --name-only "origin/${GITHUB_BASE_REF}...HEAD" || true)
+          fail=0
+          for f in $added; do
+            grep -q 'kind: HTTPRoute' "$f" 2>/dev/null || continue
+            attaches_external "$f" || continue
+            if ! grep -qx 'kubernetes/apps/network/cloudflared/app/networkpolicy.yaml' <<<"$changed"; then
+              echo "::error file=$f::external に繋がる HTTPRoute を追加したが、cloudflared の egress を触っていない。backend を networkpolicy.yaml に足さないと 403 になる" >&2
+              fail=1
+            fi
+          done
+          exit $fail
 
   terraform:
     name: Terraform
