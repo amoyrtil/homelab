@@ -68,6 +68,7 @@ homelab の構築過程で行った検証と、そこで得た知見の置き場
 - **`403 Access denied` は Cilium の既定の応答本文である。** トンネル経由の応答には Cloudflare が必ず `Server: cloudflare` を付けるため、WAF の 403 と見分けが付かない。切り分けは Cloudflare を通さず Gateway を直接叩く。
 - **cloudflared の Edge へのポートは 7844 である。** 443 は Cloudflare のドキュメントでも optional で、自動更新を切っていれば要らない。
 - **cloudflared の :2000 は `/config` を無認証で返す。** 公開しているホスト名と backend の Service 名が読める。ingress を書いて kubelet だけに絞る。
+- **上流チャートが複雑さを引き受けないものは素のマニフェストで書く。** チャートのイメージ参照は repository と tag に分かれており、digest を書く場所が無い。Deployment 1つで足りる cloudflared をチャートに載せると、インターネットの入口だけが `pinDigests` の対象から外れる。
 - **flux-operator の `allow-webhooks` は Gateway 経由の要求を落とす。** ingress の `from` を `namespaceSelector` に限っており、Cilium から見て world の identity を持つ要求が当たらない。`from` を書かない NetworkPolicy を1つ足す。
 - **DNS レコードを作った直後の確認は NXDOMAIN のネガティブキャッシュを踏む。** Cloudflare の SOA は最小 TTL が 1800 秒であり、external-dns の同期より先に引くと最大 30 分そのまま返る。
 - **リポジトリを移すと5箇所が黙って効かなくなる。** `FluxInstance` の `sync.url`、GitHub の webhook、自動承認のワークフロー、`CODEOWNERS`、`terraform/*/variables.tf` の「public であるため」という理由である。**自動承認が止まるとマージができなくなる。** `main` は承認1件を必須にしており `enforce_admins` も立っている。
