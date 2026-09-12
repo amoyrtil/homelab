@@ -1,0 +1,102 @@
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+
+  // design.md の CI/CD 方針:「CI 側の仕事はマニフェストの検証と Renovate による
+  // 更新 PR に限る」。Renovate はクラスターに触らない。PR を出すだけで、
+  // 反映するのは main にマージされたあとの Flux である。
+
+  extends: [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommits",
+    "helpers:pinGitHubActionDigests",
+  ],
+
+  timezone: "Asia/Tokyo",
+  schedule: ["* 0-6 * * *"],
+
+  // 1人で運用するため、同時に開く PR を絞る。
+  prConcurrentLimit: 5,
+  prHourlyLimit: 2,
+
+  commitMessagePrefix: "",
+  commitMessageTopic: "{{depName}}",
+
+  flux: {
+    managerFilePatterns: ["/kubernetes/.+\\.ya?ml$/"],
+  },
+
+  "helm-values": {
+    managerFilePatterns: ["/kubernetes/.+\\.ya?ml$/"],
+  },
+
+  kubernetes: {
+    managerFilePatterns: ["/kubernetes/.+\\.ya?ml$/", "/bootstrap/.+\\.ya?ml$/"],
+  },
+
+  // talconfig.yaml のバージョンは talhelper 固有の書き方であり、
+  // 既製のマネージャーが拾わない。正規表現で拾う。
+  customManagers: [
+    {
+      customType: "regex",
+      description: "talconfig.yaml の Talos と Kubernetes",
+      managerFilePatterns: ["/talos/talconfig\\.yaml$/"],
+      matchStrings: [
+        "talosVersion:\\s*(?<currentValue>v\\S+)",
+        "kubernetesVersion:\\s*(?<currentValue>v\\S+)",
+      ],
+      datasourceTemplate: "github-releases",
+      depNameTemplate: "siderolabs/talos",
+      versioningTemplate: "semver",
+    },
+    {
+      customType: "regex",
+      description: "design.md と knowledge/ に書いた Gateway API CRD のバージョン",
+      managerFilePatterns: ["/docs/.+\\.md$/"],
+      matchStrings: [
+        "gateway-api/releases/download/(?<currentValue>v\\S+?)/experimental-install\\.yaml",
+      ],
+      datasourceTemplate: "github-releases",
+      depNameTemplate: "kubernetes-sigs/gateway-api",
+    },
+  ],
+
+  packageRules: [
+    {
+      description: "talconfig.yaml の kubernetesVersion は Talos とは別に追う",
+      matchManagers: ["custom.regex"],
+      matchFileNames: ["talos/talconfig.yaml"],
+      matchStrings: ["kubernetesVersion"],
+      depNameTemplate: "kubernetes/kubernetes",
+    },
+    {
+      description: "パッチは自動マージの候補にしない。homelab では人が見る",
+      matchUpdateTypes: ["patch"],
+      automerge: false,
+    },
+    {
+      description: "Talos と Kubernetes はノードの作り直しに関わる。まとめない",
+      matchDatasources: ["github-releases"],
+      matchPackageNames: ["siderolabs/talos", "kubernetes/kubernetes"],
+      groupName: null,
+      labels: ["node-rebuild"],
+    },
+    {
+      description: "Cilium は CNI である。単独の PR にする",
+      matchPackageNames: ["/cilium/"],
+      groupName: null,
+      labels: ["cni"],
+    },
+    {
+      description: "Longhorn はデータに関わる。単独の PR にする",
+      matchPackageNames: ["/longhorn/"],
+      groupName: null,
+      labels: ["storage"],
+    },
+  ],
+
+  // bootstrap/ の Cilium と flux-operator のバージョンは、いまどのファイルにも
+  // 無い（knowledge/cluster-bootstrap-order.md の helm install 行にしか出てこない）。
+  // helmfile へ移したら managerFilePatterns に helmfile を足す。
+  // 作業項目は docs/plan.md にある。
+}

@@ -1,0 +1,124 @@
+# マニフェストと Terraform の検証。
+#
+# design.md の CI/CD 方針にある「CI 側の仕事はマニフェストの検証と Renovate に
+# よる更新 PR に限る」の前半である。
+# クラスターには触らない。kubeconfig も渡さない。
+#
+# SOPS で暗号化した Secret はそのまま kustomize で読める。
+# .sops.yaml が encrypted_regex で data と stringData だけを暗号化しており、
+# apiVersion と kind と metadata は平文のまま残るためである。
+# 復号鍵を CI に置かずに検証できる。
+
+name: Validate
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  kubernetes:
+    name: Kubernetes マニフェスト
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: jdx/mise-action@v3
+        with:
+          install_args: kustomize kubeconform
+
+      - name: kustomize build が通るか
+        run: |
+          set -euo pipefail
+          fail=0
+          while IFS= read -r dir; do
+            printf '%-60s ' "$dir"
+            if out=$(kustomize build "$dir" 2>&1); then
+              echo "OK ($(grep -c '^---' <<<"$out" || true) docs)"
+            else
+              echo "FAIL"; echo "$out" | sed 's/^/    /'; fail=1
+            fi
+          done < <(find kubernetes -name kustomization.yaml -exec dirname {} \; | sort)
+          exit $fail
+
+      - name: kubeconform でスキーマを検証する
+        # 置換前のマニフェストをそのまま流すと2種類の偽陽性が出る。
+        #
+        # 1. ${SECRET_DOMAIN} は Flux の postBuild が解決するため、この時点では
+        #    ホスト名のパターンに一致しない。ダミーに置き換えてから検証する。
+        # 2. SOPS で暗号化した Secret はトップレベルに sops キーを持ち、
+        #    -strict が additional properties として弾く。Secret だけ飛ばす。
+        #    中身は暗号化されており、どのみち値を検証できない。
+        #
+        # -strict は他の種類には効かせる。属性名の打ち間違いを拾うためである。
+        run: |
+          set -euo pipefail
+          fail=0
+          while IFS= read -r dir; do
+            printf '%-60s ' "$dir"
+            out=$(kustomize build "$dir" \
+              | sed -E 's/\$\{SECRET_DOMAIN\}/example\.com/g; s/\$\{SECRET_[A-Z0-9_]+\}/placeholder/g' \
+              | kubeconform \
+                  -strict \
+                  -ignore-missing-schemas \
+                  -skip Secret \
+                  -schema-location default \
+                  -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+                  -summary -output text 2>&1) || fail=1
+            echo "$out" | tail -1
+            [ "$fail" -eq 1 ] && echo "$out" | sed 's/^/    /'
+          done < <(find kubernetes -name kustomization.yaml -exec dirname {} \; | sort)
+          exit $fail
+
+      - name: external Gateway に繋がった HTTPRoute の backend を並べる
+        # cloudflared の egress ポリシーは、公開する HTTPRoute の backend を
+        # 列挙する形で書いてある（knowledge/gateway-and-tunnel.md）。
+        # external に足したのに egress へ足し忘れると 403 になる。
+        # 機械的な突き合わせは Service から Pod ラベルを解決する必要があり、
+        # 静的には決まらない。ここでは一覧を出すに留め、目視の手がかりにする。
+        run: |
+          set -euo pipefail
+          echo "external Gateway に繋がった HTTPRoute:"
+          grep -rl 'kind: HTTPRoute' kubernetes/ | while IFS= read -r f; do
+            if grep -A3 'parentRefs:' "$f" | grep -q 'name: external'; then
+              echo "  $f"
+              grep -A2 'backendRefs:' "$f" | sed 's/^/    /'
+            fi
+          done
+          echo
+          echo "cloudflared の egress で許可している backend:"
+          sed -n '/egress:/,$p' kubernetes/apps/network/cloudflared/app/networkpolicy.yaml \
+            | grep -E 'io.kubernetes.pod.namespace|app:|port:' | sed 's/^/  /'
+
+  terraform:
+    name: Terraform
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: jdx/mise-action@v3
+        with:
+          install_args: opentofu
+
+      - name: fmt
+        run: tofu fmt -check -recursive -diff terraform/
+
+      - name: init と validate
+        # backend は無効にする。R2 の資格情報を CI に置かないためである。
+        # provider のスキーマだけを取ってきて構文と型を見る。
+        run: |
+          set -euo pipefail
+          for dir in terraform/*/; do
+            [ -f "${dir}versions.tf" ] || continue
+            echo "=== ${dir} ==="
+            tofu -chdir="$dir" init -backend=false -input=false -no-color
+            tofu -chdir="$dir" validate -no-color
+          done
