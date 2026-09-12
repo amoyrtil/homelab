@@ -422,7 +422,7 @@ VLAN の番号体系、LB Pool を VLAN 120 に切る判断、公開のスイッ
 | 重大 | 内容 |
 | --- | --- |
 | ZBF が1本も入っていない | 「Terraform に載せない」と決めた時点で、投入がどの作業リストからも落ちていた。VLAN は7つとも既定の Internal ゾーンにおり、相互に到達する |
-| CI が丸ごと無い | design.md が「マニフェストの検証と Renovate」を宣言していたが、`.github/workflows/` は自動承認1本だけだった |
+| 宣言した CI が無い | design.md が「マニフェストの検証と Renovate」を宣言していたが、`.github/workflows/` は自動承認1本だけだった。CodeQL の default setup は動いていたが、対象は Actions のワークフローだけで、マニフェストも Terraform も見ていない |
 | 公開リポジトリに CA 秘密鍵 | `talsecret.sops.yaml` が cluster CA と etcd CA を持ち、recipient は age 鍵1本だった |
 
 **覆した判断が2つある。**

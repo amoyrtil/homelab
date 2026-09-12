@@ -154,6 +154,13 @@ API トークンも同じ回で Roll する。追加のコストがほとんど�
 R9（2026年9月11日）で `.github/workflows/validate.yaml` を入れた。
 design.md が「CI 側の仕事はマニフェストの検証と Renovate による更新 PR に限る」と宣言していたが、実装が無かった。
 
+**リポジトリの設定側にあるものは、ファイルを読んでも見えない。**
+R9 の監査でこれを2回踏んだ。
+`main` のブランチ保護（承認1件必須、`enforce_admins`）と、CodeQL の default setup である。
+どちらも `.github/` に痕跡が無く、`gh api` で引いて初めて分かった。
+CI と承認まわりを見直すときは、ファイルと `gh api repos/<owner>/<repo>/branches/main/protection`、
+`gh api repos/<owner>/<repo>/code-scanning/default-setup` の両方を見る。
+
 **復号鍵を CI に置く必要はない。**
 `.sops.yaml` が `encrypted_regex: ^(data|stringData)$` で値だけを暗号化しており、
 `apiVersion`、`kind`、`metadata` は平文で残る。
