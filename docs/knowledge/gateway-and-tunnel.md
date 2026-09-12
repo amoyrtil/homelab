@@ -191,6 +191,51 @@ Cloudflare Edge が `530` を返して落とすため、末尾の `404` は保�
 初回の起動では `region2.v2.argotunnel.com` への QUIC と HTTP/2 が両方失敗したが、後の起動では両方成功している。
 経路の問題ではない。
 
+### Helm チャートに載せると digest 固定を失う
+
+cloudflared だけが Deployment と ConfigMap の手書きで、ほかの HelmRelease と形が揃っていない。
+チャートへ寄せられるかを 2026年9月12日に調べた。
+
+**公式チャートは2年古い。**
+`cloudflare/helm-charts` の `cloudflare-tunnel` は 0.3.2 が最新で、appVersion は 2024.8.3、リリースは 2024-09-04 である。
+`readinessProbe` と `automountServiceAccountToken: false` に values の口が無く、載せると現物より弱くなる。
+
+**`community-charts/cloudflared` は十分に新しい。**
+2.2.17、appVersion 2026.8.3、リリースは 2026-09-01 で、2024-12 以降ほぼ月2本の頻度が続いている。
+appVersion が現物のピン留めと一致しており、上流イメージの更新を自動で追っている。
+
+細かい制御はほぼ移せる。
+`readinessProbe`、`serviceAccount.automount: false`、`resources` に values の口があり、`values.schema.json` が `podSecurityContext` に `additionalProperties: true` を許すので `seccompProfile` も書ける。
+`metrics: 0.0.0.0:2000` はテンプレートに固定で入っており、`:2000` を kubelet だけに開ける ingress ルールがそのまま効く。
+チャート名が `cloudflared` なので selector ラベルが `app.kubernetes.io/name: cloudflared` になり、**`CiliumNetworkPolicy` の `endpointSelector` は書き換えずに一致する。**
+
+それでも移さない理由が3つある。
+
+**`cert.pem` を要求される。**
+`existingConfigJsonFileSecret` だけを指定して `helm template` を実行すると、`templates/secret.yaml` が `Base64 encoded certificate pem file string is required!` で落ちる。
+条件が `or (eq pem "") (eq json "")` であり、片方だけ既存 Secret を指す形を通さない。
+`cert.pem` は `cloudflared tunnel login` が作るアカウント単位のオリジン証明書であり、この構成は CLI を捨てて `~/.cloudflared` も消している（[terraform-provisioning.md](terraform-provisioning.md#cloudflared-の-cli-は使わない)）。
+`cloudflared-credentials` には `credentials.json` しか入っていない。
+pem 側も同じ Secret を指せば描画は通るが、同じ Secret が projected volume へ2回入り、`TUNNEL_ORIGIN_CERT` が存在しないファイルを指したままになる。
+
+**PodDisruptionBudget が drain を止める。**
+`replica.allNodes: false` にすると `minAvailable: 1` の PDB が無条件で描画される。
+replicas も 1 なので退去できる Pod が常にゼロになり、ワーカー1台の構成では Talos の upgrade が drain で止まる。
+values に無効化の口は無く、DaemonSet にするか `postRenderers` で消すかの2択になる。
+
+**イメージを digest で固定できなくなる。**
+チャートの参照は `{{ .Values.image.repository }}:{{ .Values.image.tag }}` であり、digest を書く場所が無い。
+`.github/renovate.json5` は `docker.pinDigests: true` を置き、cloudflared のイメージを digest で固定する方針にしている。
+リポジトリ全体で手書きの `image:` はこの1行だけであり、素のマニフェストなのは digest を書ける場所を確保するためだった。
+インターネットの入口だけがタグ参照に戻るため、これが決め手になった。
+
+既定値が設計と逆を向いている点もある。
+`replica.allNodes` の既定は `true` で DaemonSet になり、`tolerations` の既定は `operator: Exists` なので、打ち消さないと `allowSchedulingOnControlPlanes: false` のコントロールプレーンに載る。
+`podSecurityContext` を部分上書きしても `sysctls` が Helm の deep-merge で残り、消すには `sysctls: null` が要る。
+`extraEnv` と `extraArgs` の口は無い。
+
+使い分けの基準は [design.md の「Helm と素のマニフェストの使い分け」](../design.md#helm-と素のマニフェストの使い分け)にある。
+
 ## Flux の Webhook Receiver
 
 GitHub の push を受け、`GitRepository` の取得を即座に走らせる。

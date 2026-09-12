@@ -502,6 +502,30 @@ Cloudflare の API トークンはレコード名の単位まで絞れず、ど�
 得られるのは「片方が漏れてももう片方を巻き込まない」「片方だけ Roll できる」という分離だけである。
 Roll するときに2本発行するなら追加コストがないので、そのときに分ける。
 
+### Helm と素のマニフェストの使い分け
+
+**実現したい内容に対して上流チャートが複雑さを引き受けるなら Helm、引き受けないなら素のマニフェストで書く。**
+
+引き受ける複雑さとは、CRD、RBAC、admission webhook、複数のワークロードの組み合わせ、バージョン間の移行手順を指す。
+これらを手で写すと、上流が変わるたびに同じ作業が戻ってくる。
+チャートはその追随を肩代わりする。
+
+Deployment 1つで足りるものをチャートに載せても、得られるのは chart version に Renovate が当たることだけである。
+代わりに既定値を打ち消す values が並び、打ち消しが漏れたときの症状が読み取りにくくなる。
+**素のマニフェストにはイメージを digest で固定できるという利点もある。**
+チャートのイメージ参照は repository と tag に分かれており、digest を書く場所が無い。
+
+| コンポーネント | 形式 | 理由 |
+| --- | --- | --- |
+| cilium | Helm（bootstrap） | CRD が多く、eBPF と BGP の設定量も大きい |
+| longhorn | HelmRelease | CRD、CSI ドライバー、複数の DaemonSet と Deployment |
+| cert-manager | HelmRelease | CRD と admission webhook |
+| external-dns | HelmRelease | RBAC と引数の組み立て |
+| flux-operator | Helm（bootstrap） | Flux 自身 |
+| cloudflared | 素のマニフェスト | Deployment 1つ。digest 固定を優先する（[knowledge/gateway-and-tunnel.md](knowledge/gateway-and-tunnel.md#helm-チャートに載せると-digest-固定を失う)） |
+
+コンポーネントを足すときは、上流チャートを1度描画し、手で書いた場合との差を見てから決める。
+
 ### フェーズ1で入れるコンポーネント
 
 | namespace | コンポーネント | 役割 |

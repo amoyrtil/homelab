@@ -571,6 +571,15 @@ GitHub の設定を実際に引いて確認している。
 
 **ここから先がクラスターである。**
 
+**ノードの上流リゾルバを2本にしてから構築に入る。**
+`talos/talconfig.yaml` の `nameservers` は cp-1 も worker-1 も `192.168.20.1` の1本で、UCG-Fiber が名前解決の単一障害点になっている。
+2026年9月12日、cloudflared の起動時に UCG-Fiber が1つの質問（`_v2-origintunneld._tcp.argotunnel.com` の SRV）へ約47秒間だけ応答を返さず、Pod が `exitCode=1` で落ちて再起動する事象を観測した。
+同じ時間帯に他の質問へは正常に応答しており、6時間で欠損したのはこの質問だけだった。
+2本目があれば、1本目のタイムアウト後の切り替えで吸収できた。
+この SRV は TTL が 300 秒で再起動の間隔より短く、**cloudflared は起動のたびに未キャッシュの問い合わせになる。**
+ノードを作る前に入れる。あとから変えると全ノードへの再適用になる。
+
+- [ ] `talos/talconfig.yaml` の `nameservers` を2本にする（cp-1 と worker-1 の両方。2本目は「[着手前に決めること](#着手前に決めること)」で決める）
 - [ ] EliteDesk 800 G6 を1台、`cp-1` として構築する
 - [ ] `talsecret` を作り直し、API トークン類を Roll する（[knowledge/flux-bootstrap.md](knowledge/flux-bootstrap.md#公開したものは-private-化しても取り消せない)）
 - [ ] MS-03 を `worker-1` として再投入する
@@ -622,6 +631,7 @@ Backup DNS はクラスターと無関係に建てられるので、順番を入
 | --- | --- | --- |
 | 構築期間中の DNS の常用系 | 定常運用は Pi-hole を primary、Backup DNS を待機系とすることで決着した（[knowledge/service-exposure.md](knowledge/service-exposure.md)）。残るのは構築期間中の扱いで、クラスターの作り直しを繰り返すあいだ Backup DNS を常用系に据えるかを決める。いまの Pi-hole は S100-WLP 上のスタンドアロンで動いており、クラスターの作り直しの影響を受けない | フェーズ1で Pi-hole を移設する前 |
 | 公開サービスの認証方式 | Cloudflare Access と WAF は LAN 内から効かない。内部アクセスは Cloudflare を経由しないため、認証もレート制限も適用されない（[knowledge/service-exposure.md](knowledge/service-exposure.md)）。受け入れるか、内部にも別の認証を置くかを決める。design.md の所有権表は Access を Terraform の持ち物としているが、`terraform/cloudflare/` に実体は無い | サービスを1つでも公開する前 |
+| ノードの2本目の上流リゾルバ | `talos/talconfig.yaml` の `nameservers` に足す2本目を何にするか。候補はクラスター外の Backup DNS と公開リゾルバ（`1.1.1.1` など）。Backup DNS はクラスターより先に建つが、cp-1 の構築時点ではまだ存在しない。公開リゾルバは即使えるかわりに、UCG-Fiber で外向きの 53 をリダイレクトする方針と噛み合うかの確認が要る | ノードを構築する前 |
 | EliteDesk のストレージ種別 | NVMe か SATA か | 実機の到着後、ISO を焼く前 |
 | MS-03 の接続 NIC | X710 の SFP+ か RTL8127 の RJ-45 か。USW-Pro-XG-10-PoE の SFP28 ポートは2口しかなく、うち1口は UCG-Fiber への上流で埋まる | 本設置の配線時 |
 | 10GbE 配線の到達範囲 | トポロジ図で USW-Pro-XG-10-PoE のポート 5-10（DS923+、MS-03 x2、サーバーノード x3）が `GbE` と表記されている。同機は全 RJ45 ポートが 10GbE で、MS-03 は 10G SFP+ を2口持つ。機器側 NIC の制約を指しているのか記入漏れなのかを確定させる | 本設置の配線時 |
