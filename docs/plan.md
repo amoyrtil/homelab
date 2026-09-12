@@ -508,8 +508,21 @@ UCG-Fiber 側の VLAN 120 と BGP はリハーサルで投入済みであり、�
 - [ ] `terraform/*/variables.tf` と `.mise/tasks/terraform` の「リポジトリが public であるため」という理由を書き換える（値を Git に置かない判断そのものは維持する）
 - [ ] `age.agekey` のバックアップ鍵をオフラインへ移し、作業マシンから消す
 
+**`main` のブランチ保護（2026年9月12日時点）**
+
+| 設定 | 値 |
+| --- | --- |
+| `required_status_checks` | `Kubernetes マニフェスト`、`Terraform`（`strict: false`） |
+| `required_approving_review_count` | 1 |
+| `dismiss_stale_reviews` | true |
+| `require_code_owner_reviews` | true |
+| `require_last_push_approval` | true |
+| `enforce_admins` | true |
+| `allow_force_pushes` | false |
+| `required_conversation_resolution` | true |
+
 **自動承認は消せない。**
-`main` のブランチ保護は承認1件を必須とし、`dismiss_stale_reviews` と `enforce_admins` が立っている。
+承認1件が必須で、`dismiss_stale_reviews` と `enforce_admins` が立っている。
 push のたびに承認が落ち、ワークフローが `synchronize` で付け直している。
 つまりこれは**1人でこのリポジトリをマージ可能に保っている装置**であり、飾りではない。
 
@@ -519,7 +532,7 @@ org へ移すと `github.repository_owner` が org 名になり、PR 作成者�
 R9 の監査でここを「何も守っていない」と書いたが、誤りだった。
 GitHub の設定を実際に引いて確認している。
 
-- [ ] `validate.yaml` の2ジョブを `main` の必須ステータスチェックにする（いまは `required_status_checks` が null で、検証が落ちてもマージできる）
+- [x] `validate.yaml` の2ジョブを `main` の必須ステータスチェックにする
 
 **ここから先がクラスターである。**
 
