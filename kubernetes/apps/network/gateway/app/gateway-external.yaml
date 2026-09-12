@@ -25,6 +25,19 @@ spec:
       protocol: HTTP
       port: 80
       hostname: "*.${SECRET_DOMAIN}"
+      # 公開のスイッチは parentRefs だが、それだけだとどの namespace からでも
+      # 1行足すだけで external に繋がる。
+      # 実際の到達は cloudflared の egress が backend を列挙する形で塞いであり、
+      # 許可の無い backend は 403 になる。ただし external-dns は Gateway に
+      # 繋がった時点でレコードを書くため、届かなくても名前は公開 DNS に出る。
+      #
+      # namespace 側にも許可を要求する。公開を意図した namespace に
+      # homelab/expose: "true" を付ける。
+      # ラベルの無い namespace から parentRefs に external を書いても繋がらず、
+      # レコードも作られない。
       allowedRoutes:
         namespaces:
-          from: All
+          from: Selector
+          selector:
+            matchLabels:
+              homelab/expose: "true"
