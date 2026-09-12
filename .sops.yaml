@@ -1,14 +1,32 @@
+# 復号できる鍵は2本ある。
+# 1本目は日常の作業に使う鍵で、~/.config/sops/age/keys.txt にある。
+# 2本目はバックアップであり、オフラインに保管する。
+#
+# 1本しか無いと、その鍵を失った時点で talsecret.sops.yaml が開けなくなる。
+# Terraform の state はリソースを import し直せば復旧するが、
+# クラスターの CA 秘密鍵は復旧できない。クラスターの作り直しになる。
+#
+# 鍵を足したり外したりしたら、既存のファイルに反映する。
+#   sops updatekeys <file>
+# 反映しないと .sops.yaml と暗号文の recipient がずれ、新しい鍵で開けない。
+
 creation_rules:
   # Kubernetes のマニフェストは data と stringData だけを暗号化する。
   # ファイル全体を暗号化すると apiVersion や kind まで隠れ、kustomize が
   # リソースとして読めなくなる。差分もレビューできなくなる。
   - path_regex: kubernetes/.*\.sops\.ya?ml$
     encrypted_regex: ^(data|stringData)$
-    age: age1k03mxpgxqe2kn2m4njawxjjd9mt70t90q6qzvrwn4eeqxpk6ad5sy9pm0j
+    age: >-
+      age1k03mxpgxqe2kn2m4njawxjjd9mt70t90q6qzvrwn4eeqxpk6ad5sy9pm0j,
+      age13n75cytyd93xp44meu7arr3rn0n9m2pwps9h4vmd9jzx9cxhhuuqvkyzg4
   # talsecret.sops.yaml など、Kubernetes のリソースでないものは全体を暗号化する。
   - path_regex: .*\.sops\.ya?ml$
-    age: age1k03mxpgxqe2kn2m4njawxjjd9mt70t90q6qzvrwn4eeqxpk6ad5sy9pm0j
+    age: >-
+      age1k03mxpgxqe2kn2m4njawxjjd9mt70t90q6qzvrwn4eeqxpk6ad5sy9pm0j,
+      age13n75cytyd93xp44meu7arr3rn0n9m2pwps9h4vmd9jzx9cxhhuuqvkyzg4
   # Terraform の資格情報は dotenv 形式で持つ。Kubernetes のリソースではないため
   # ファイル全体を暗号化する。
   - path_regex: .*\.sops\.env$
-    age: age1k03mxpgxqe2kn2m4njawxjjd9mt70t90q6qzvrwn4eeqxpk6ad5sy9pm0j
+    age: >-
+      age1k03mxpgxqe2kn2m4njawxjjd9mt70t90q6qzvrwn4eeqxpk6ad5sy9pm0j,
+      age13n75cytyd93xp44meu7arr3rn0n9m2pwps9h4vmd9jzx9cxhhuuqvkyzg4
